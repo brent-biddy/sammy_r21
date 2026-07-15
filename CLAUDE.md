@@ -10,13 +10,21 @@ with the raw matrices living on OSCER scratch. All steps run through a single en
 point, `main.nf`, selected with `--step`:
 
 - `create_adata` — converts a Cell Ranger `filtered_feature_bc_matrix` directory into
-  a sample-level `<sample>.h5ad`. Annotates per-cell/per-gene QC metrics
+  a sample-level `<sample>.h5ad`. Attaches `sample` and `condition` to every cell in
+  `obs` (both `Categorical`), and annotates per-cell/per-gene QC metrics
   (`total_counts`, `n_genes_by_counts`, `pct_counts_mt`, `percent_top`) but **filters
   nothing** — it produces the raw artifact and leaves thresholds to downstream
   analysis. Mito genes are auto-detected from the gene symbols with a case-insensitive
   `^[Mm][Tt]-` match, so human and mouse both work with no species flag. Ported from
   the `xenium_nb` pipeline, where it was the odd one out (scRNA-seq, not Xenium) and
   nothing consumed its h5ad.
+
+`condition` comes from a required samplesheet column, not from parsing the sample ID.
+The ID prefix and the input path both happen to encode it for this cohort, but an
+explicit column is what makes each h5ad self-describing — downstream code reads
+`adata.obs["condition"]` and never re-reads the samplesheet or splits strings. It is
+required rather than defaulted because a silently-missing condition yields an object
+that looks fine but cannot be compared across groups.
 
 **Samples are clustered individually first — there is no concat step**, and one is not
 planned until per-sample clustering says whether merging is warranted. `create_adata`
@@ -26,7 +34,8 @@ endpoint.
 ## Commands
 
 ### Run a step
-`--samplesheet` is always required; columns vary by step.
+`--samplesheet` is always required; columns vary by step (`create_adata` takes
+`sample,condition,path`).
 
 ```bash
 nextflow run main.nf --step create_adata -profile oscer --samplesheet assets/samplesheet.csv

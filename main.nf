@@ -3,7 +3,7 @@
 // All steps run through this single entry point, selected with --step.
 //
 // Steps:
-//   create_adata              samplesheet: sample, path
+//   create_adata              samplesheet: sample, condition, path
 
 include { CREATE_ADATA } from './modules/create_adata'
 
@@ -23,12 +23,16 @@ workflow create_adata {
 
     channel
         .fromPath(params.samplesheet)
-        .splitCsv(header: true)      // Map(sample, path)
+        .splitCsv(header: true)      // Map(sample, condition, path)
         .map { row ->
-            if (!row.sample) error "Samplesheet row missing 'sample': ${row}"
-            if (!row.path)   error "Samplesheet row missing 'path': ${row}"
-            tuple(row.sample, file(row.path))
-        }                            // tuple(sample, path)
+            if (!row.sample)    error "Samplesheet row missing 'sample': ${row}"
+            // Required, not defaulted: condition is baked into every cell of the
+            // h5ad, and a silently-missing one would produce an object that looks
+            // fine but cannot be compared across groups.
+            if (!row.condition) error "Samplesheet row missing 'condition': ${row}"
+            if (!row.path)      error "Samplesheet row missing 'path': ${row}"
+            tuple(row.sample, row.condition, file(row.path))
+        }                            // tuple(sample, condition, path)
         | CREATE_ADATA
 
     // Aggregate the per-sample rows the process emits into a ready-to-use handoff

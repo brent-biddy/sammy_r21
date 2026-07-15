@@ -9,15 +9,20 @@ the raw artifact consumed by downstream clustering, which owns its own QC
 thresholds. Mitochondrial genes are detected from the gene symbols themselves,
 so no species argument is needed.
 
+The sample identifier and its experimental condition are attached to every cell
+in obs, so each h5ad is self-describing and downstream code never has to recover
+the design by parsing sample IDs or re-reading the samplesheet.
+
 Writes <sample>.h5ad into the current working directory, alongside timing and
 session info files.
 
 Usage:
-    create_adata.py --sample S1 --path /data/S1/outs/filtered_feature_bc_matrix
+    create_adata.py --sample S1 --condition normal --path /data/S1/outs/filtered_feature_bc_matrix
 """
 
 import argparse
 
+import pandas as pd
 import scanpy as sc
 import session_info
 
@@ -29,6 +34,11 @@ def parse_args():
         description="Convert a Cell Ranger count matrix to an AnnData h5ad store"
     )
     parser.add_argument("--sample", required=True, help="Sample identifier")
+    parser.add_argument(
+        "--condition",
+        required=True,
+        help="Experimental condition for this sample (e.g. normal, obese)",
+    )
     parser.add_argument(
         "--path",
         required=True,
@@ -42,9 +52,10 @@ def main():
 
     output_path = f"{args.sample}.h5ad"
 
-    print(f"Sample:  {args.sample}")
-    print(f"Input:   {args.path}")
-    print(f"Output:  {output_path}")
+    print(f"Sample:    {args.sample}")
+    print(f"Condition: {args.condition}")
+    print(f"Input:     {args.path}")
+    print(f"Output:    {output_path}")
 
     # var_names="gene_symbols" makes downstream gene lookups readable; the Ensembl
     # IDs stay available in var["gene_ids"]. cache=False keeps scanpy from writing
@@ -56,9 +67,13 @@ def main():
     # can share a symbol). Suffix the duplicates so var_names can index.
     adata.var_names_make_unique()
 
-    adata.obs["sample"] = args.sample
+    # Categorical (not object) so scanpy's groupby/plotting treats these as discrete
+    # and so a later concat unions the categories rather than falling back to object.
+    # Each h5ad carries exactly one sample and one condition, hence one category each.
+    adata.obs["sample"] = pd.Categorical([args.sample] * adata.n_obs)
+    adata.obs["condition"] = pd.Categorical([args.condition] * adata.n_obs)
 
-    print(f"Loaded:  {adata.n_obs:,} cells x {adata.n_vars:,} genes")
+    print(f"Loaded:    {adata.n_obs:,} cells x {adata.n_vars:,} genes")
 
     with timer("QC metrics"):
         # Case-insensitive so human (MT-ND1) and mouse (mt-Nd1) both match with no
