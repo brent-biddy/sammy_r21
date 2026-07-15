@@ -31,6 +31,11 @@ from IPython.display import display, Markdown
 # The reference template is 16:9 at 10 x 5.625in; leave room for a slide title.
 FIGSIZE = (9.0, 4.3)
 
+# Condition palette, carried over from oir-analysis so figures across the two
+# projects read the same. Teal/orange is a blue-orange axis, which stays separable
+# under the common red-green CVDs.
+COLORS = {"normal": "#2AABB8", "obese": "#E87D2A"}
+
 # Every h5ad is staged into this notebook's working directory by the Nextflow
 # process, so globbing is the whole input contract — no params to pass or drift.
 H5ADS = sorted(Path(".").glob("*.h5ad"))
@@ -75,6 +80,42 @@ def qc_scatter(sample):
     cbar = fig.colorbar(scatter, ax=ax, fraction=0.03, pad=0.02)
     cbar.set_label("Mito % (clipped at 25)", fontsize=8)
     cbar.ax.tick_params(labelsize=7)
+    fig.tight_layout()
+    plt.show()
+    plt.close(fig)
+
+
+def qc_hist(sample, metric, label, bins=100):
+    """One slide's figure: the distribution of a raw-count QC metric for one sample.
+
+    All three metrics come straight off the raw count matrix — create_adata runs
+    calculate_qc_metrics on the unnormalized X with log1p=False, so there is no
+    normalized variant of these columns to pick up by mistake.
+
+    Linear x, and y is a cell count rather than a density, so the bar heights are
+    the actual number of cells.
+    """
+    d = obs[obs["sample"] == sample]
+    values = d[metric]
+    fig, ax = plt.subplots(figsize=FIGSIZE)
+    ax.hist(values, bins=bins, color=COLORS[d["condition"].iloc[0]], edgecolor="none")
+
+    # The median is the anchor the threshold conversation keeps returning to, and a
+    # histogram's peak is not it when the tail is this long.
+    median = values.median()
+    ax.axvline(median, color="black", linewidth=1, linestyle="--")
+    ax.annotate(f"median {median:,.1f}" if metric == "pct_counts_mt" else f"median {median:,.0f}",
+                xy=(median, 1), xycoords=("data", "axes fraction"),
+                xytext=(4, -10), textcoords="offset points",
+                fontsize=8, va="top", ha="left")
+
+    ax.set_xlabel(label, fontsize=9)
+    ax.set_ylabel("Cells", fontsize=9)
+    ax.set_title(f"{sample} · {len(d):,} cells", fontsize=9, loc="left")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.tick_params(labelsize=8)
+    ax.grid(axis="y", alpha=0.25, linewidth=0.5)
+    ax.set_axisbelow(True)
     fig.tight_layout()
     plt.show()
     plt.close(fig)
@@ -139,10 +180,46 @@ md_table(pd.DataFrame(rows))
 qc_scatter("normal_id_20")
 ```
 
+## Genes per cell
+
+```{python}
+qc_hist("normal_id_20", "n_genes_by_counts", "Genes detected per cell")
+```
+
+## Counts per cell
+
+```{python}
+qc_hist("normal_id_20", "total_counts", "UMI counts per cell")
+```
+
+## Mitochondrial %
+
+```{python}
+qc_hist("normal_id_20", "pct_counts_mt", "Mitochondrial % of counts")
+```
+
 # obese_id_23
 
 ## Counts vs genes
 
 ```{python}
 qc_scatter("obese_id_23")
+```
+
+## Genes per cell
+
+```{python}
+qc_hist("obese_id_23", "n_genes_by_counts", "Genes detected per cell")
+```
+
+## Counts per cell
+
+```{python}
+qc_hist("obese_id_23", "total_counts", "UMI counts per cell")
+```
+
+## Mitochondrial %
+
+```{python}
+qc_hist("obese_id_23", "pct_counts_mt", "Mitochondrial % of counts")
 ```
