@@ -18,11 +18,32 @@ point, `main.nf`, selected with `--step`:
   `^[Mm][Tt]-` match, so human and mouse both work with no species flag. Ported from
   the `xenium_nb` pipeline, where it was the odd one out (scRNA-seq, not Xenium) and
   nothing consumed its h5ad.
-- `qc_report` — renders `notebooks/qc_report.qmd` to a single self-contained
-  `qc_report.html` covering **all** samples at once: per-sample summary table, violins
-  of genes/counts/mito/top-20, the counts-vs-genes scatter coloured by mito %, and
+- `qc_report` — renders `notebooks/qc_report.qmd` to `qc_report.pptx` covering **all**
+  samples at once: per-sample summary table, one violin slide per metric
+  (genes/counts/mito/top-20), the counts-vs-genes scatter coloured by mito %, and
   MAD-based suggested per-sample thresholds. Read-only — it filters nothing and writes
   no h5ad. This is the step to look at **before** choosing clustering QC thresholds.
+
+### The QC report is a deck, and that constrains it
+
+Output is PPTX via `resources/ouhsc_ppt_template.pptx` (`reference-doc`), the same
+deliverable pattern as `oir-analysis`. Three constraints follow, all of which fail
+quietly rather than loudly:
+
+- **Tables must be markdown**, built by hand and passed to `display(Markdown(...))`.
+  `df.style` is HTML-only and renders as *nothing* in pptx; `df.to_markdown()` needs
+  `tabulate`, which the container does not carry. Done right they become native
+  PowerPoint tables (`graphicFrame`), not images.
+- **One figure per slide, sized to fit.** The reference template is 16:9 at
+  10 × 5.625in, so figures are 9.5 × 4.5. A tall stacked multi-metric panel works in a
+  scrolling page and is unreadable on a slide — hence one violin slide per metric.
+- **No prose after a table.** Trailing text gets pushed onto a slide of its own, titled
+  with its first sentence fragment. The cohort total is a row in the table for exactly
+  this reason.
+
+`quarto render` resolves `reference-doc` relative to the qmd's own directory, so the
+module stages the template beside the staged notebook rather than referencing its repo
+path.
 
 ### The QC report is a fan-in step, and stages its inputs
 
@@ -80,8 +101,8 @@ nextflow run main.nf --step qc_report -profile oscer \
     --samplesheet /scratch/$USER/sammy_r21_out/<run_id>/results/create_adata_samplesheet.csv
 ```
 
-The report lands at `<outdir>/qc_report/qc_report.html`, self-contained (~1.4 MB with
-2 samples), so it is a single `scp` to view off the cluster.
+The report lands at `<outdir>/qc_report/qc_report.pptx` (~193 KB with 2 samples), so it
+is a single `scp` to view off the cluster.
 
 Every artifact-producing step publishes a handoff samplesheet into `outdir`
 (`<step>_samplesheet.csv`) listing its outputs as `sample,path`, so the next step's

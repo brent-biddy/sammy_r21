@@ -12,9 +12,12 @@ process QC_REPORT {
     // to pass and nothing to keep in sync with the notebook's parameters cell.
     path h5ads
     path notebook
+    // Quarto resolves reference-doc relative to the qmd's own directory, so the
+    // template has to land beside the staged notebook, not at its repo path.
+    path template
 
     output:
-    path "qc_report.html", emit: report
+    path "qc_report.pptx", emit: report
 
     script:
     """
@@ -27,6 +30,6 @@ process QC_REPORT {
 
     stub:
     """
-    touch qc_report.html
+    touch qc_report.pptx
     """
 }

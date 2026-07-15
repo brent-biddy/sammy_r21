@@ -44,7 +44,7 @@ conda activate sammy_r21
 # Build per-sample h5ads on OSCER (the real target — inputs are on /ourdisk)
 nextflow run main.nf --step create_adata -profile oscer --samplesheet assets/samplesheet.csv
 
-# Cohort QC report — point at create_adata's published handoff samplesheet
+# Cohort QC report (PPTX) — point at create_adata's published handoff samplesheet
 nextflow run main.nf --step qc_report -profile oscer --samplesheet <results>/create_adata_samplesheet.csv
 
 # Verify wiring without executing anything

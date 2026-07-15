@@ -62,5 +62,9 @@ workflow qc_report {
         .toSortedList()              // one list of every h5ad: fans in to a single task
         .set { qcReportH5ads }
 
-    QC_REPORT(qcReportH5ads, file("${projectDir}/notebooks/qc_report.qmd"))
+    QC_REPORT(
+        qcReportH5ads,
+        file("${projectDir}/notebooks/qc_report.qmd"),
+        file("${projectDir}/resources/ouhsc_ppt_template.pptx"),
+    )
 }
