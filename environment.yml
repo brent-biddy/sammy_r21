@@ -1,3 +1,6 @@
+# Conda env for running the pipeline with no profile (no container), and for
+# ad hoc analysis of the h5ads the pipeline produces. The `local` and `oscer`
+# profiles use babiddy755/python_spatial:1.2.0 instead and do not read this file.
 name: sammy_r21
 channels:
   - conda-forge
@@ -9,5 +12,7 @@ dependencies:
   - pandas
   - quarto
   - python-igraph
+  - leidenalg
   - scanpy
   - scipy
+  - session-info

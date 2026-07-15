@@ -1,4 +1,12 @@
-# Data - kept locally, never tracked (scripts create data/ as needed)
+# Nextflow
+results*/
+work/
+.nextflow*
+*.log
+*.sif
+.apptainer-cache/
+
+# Data - kept locally, never tracked
 data/
 *.h5ad
 *.h5

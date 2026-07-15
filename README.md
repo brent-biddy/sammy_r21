@@ -2,38 +2,46 @@
 
 ## Overview
 
-<!-- TODO: one-paragraph description — the biological question, the samples, and
-     the deliverable. -->
-
-Single-cell RNA-seq analysis for the Sammy R21. A short pipeline builds and
-clusters an AnnData object from local CellRanger output, annotates cell types,
-and renders a presentation deck of the results.
+Nextflow pipeline for scRNA-seq analysis of the Sammy R21 cohort — 15 Cell Ranger
+samples, 10 `normal` vs 5 `obese`. The pipeline converts each sample's Cell Ranger
+count matrix into a QC-annotated AnnData `.h5ad`; samples are clustered individually
+downstream.
 
 ## Directory structure
 
 ```
 sammy_r21/
-├── data/             # Gitignored; not tracked
-│   ├── raw/          # Original, immutable input data
-│   └── processed/    # Cleaned and transformed data
-├── resources/        # Reference files (marker gene lists, PPTX template, etc.)
-└── scripts/          # Numbered Python scripts and Quarto documents for sequential analysis steps
+├── main.nf           # Single entry point; dispatches on --step
+├── nextflow.config   # Params and the local / oscer profiles
+├── modules/          # One .nf process module per step
+├── bin/              # Python scripts invoked by the modules (argparse CLIs)
+├── assets/           # Samplesheets
+├── resources/        # Reference files (PPTX template, marker gene lists)
+├── scripts/          # Quarto report decks (not yet written)
+└── data/             # Gitignored; raw inputs live on OSCER scratch
 ```
 
 ## Setup
+
+Runs use the `babiddy755/python_spatial:1.2.0` container via Apptainer, so no local
+install is needed for the `local` or `oscer` profiles. To run with no profile, or for
+ad hoc analysis of the produced h5ads:
 
 ```bash
 conda env create -f environment.yml
 conda activate sammy_r21
 ```
 
-Copy or symlink the raw CellRanger output into `data/raw/` — `data/` is
-gitignored, so nothing under it is tracked.
-
 ## Usage
 
-Run scripts in order from the repo root:
-
 ```bash
-python scripts/01_create_anndata.py  # build AnnData object and write to data/processed/
+# Build per-sample h5ads on OSCER (the real target — inputs are on /ourdisk)
+nextflow run main.nf --step create_adata -profile oscer --samplesheet assets/samplesheet.csv
+
+# Verify wiring without executing anything
+nextflow run main.nf --step create_adata -stub --samplesheet assets/samplesheet.csv
 ```
+
+Outputs land in `<out_root>/<run_id>/results/<sample>/create_adata/<sample>.h5ad`,
+alongside a `create_adata_samplesheet.csv` handoff sheet listing them all as
+`sample,path`.
