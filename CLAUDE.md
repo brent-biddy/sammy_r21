@@ -18,6 +18,77 @@ point, `main.nf`, selected with `--step`:
   `^[Mm][Tt]-` match, so human and mouse both work with no species flag. Ported from
   the `xenium_nb` pipeline, where it was the odd one out (scRNA-seq, not Xenium) and
   nothing consumed its h5ad.
+- `qc_report` — renders `notebooks/qc_report.qmd` to `qc_report.pptx`: a cohort summary
+  table, then per sample a section-header slide, a counts-vs-genes scatter coloured by
+  mito %, and a 3-panel histogram (genes / counts / mito %). Read-only — it filters
+  nothing and writes no h5ad. This is the step to look at **before** choosing
+  clustering QC thresholds. Everything it plots comes off the **raw** count matrix.
+
+**Sample sections are hardcoded**, one `# <sample>` block per sample, and currently
+cover only `normal_id_20` and `obese_id_23` — the two with h5ads built from the local
+`~/R21` copy. Add the other 13 when the cohort is built on OSCER. Hardcoding is
+deliberate: generating headings dynamically needs `output: asis`, and under it an
+inline figure lands between the markdown blocks and leaves the *next* heading not
+starting its own line, so pandoc emits a literal `## sample` and drops the image. One
+cell per sample means `plt.show()` just works.
+
+### The QC report is a deck, and that constrains it
+
+Output is PPTX via `resources/ouhsc_ppt_template.pptx` (`reference-doc`), the same
+deliverable pattern as `oir-analysis`. These all fail quietly rather than loudly:
+
+- **`slide-level: 2` is load-bearing.** It makes `#` a Section Header slide and `##` a
+  Title-and-Content slide. Pandoc otherwise infers the level from the headings present,
+  so adding a `#` would silently demote every `##` from a slide to a bullet.
+- **Tables must be markdown**, built by hand and passed to `display(Markdown(...))`.
+  `df.style` is HTML-only and renders as *nothing* in pptx; `df.to_markdown()` needs
+  `tabulate`, which the container does not carry. Done right they become native
+  PowerPoint tables (`graphicFrame`), not images.
+- **Figures are sized to the slide.** The template is 16:9 at 10 × 5.625in, so figures
+  are ~9 × 4.3. A tall stacked panel works in a scrolling page and is unreadable on a
+  slide.
+- **No prose after a table.** Trailing text gets pushed onto a slide of its own, titled
+  with its first sentence fragment. The cohort total is a row in the table for exactly
+  this reason.
+- **`execute: error: true`** keeps the render going when a cell raises, so a section
+  whose h5ad was not staged errors on its own slide instead of taking the deck down.
+  The cost: a genuinely broken cell yields an error slide and **exit 0**. Read the
+  slides, not the exit status.
+
+`quarto render` resolves `reference-doc` relative to the qmd's own directory, so the
+module stages the template beside the staged notebook rather than referencing its repo
+path.
+
+### Plotting traps already hit here
+
+- **A log axis needs log-spaced bins.** `set_xscale("log")` with linear bins renders
+  wildly uneven bar widths and misrepresents the distribution — and it looks plausible.
+  The counts panel builds edges with `np.logspace`.
+- **A colorbar inherits its mappable's alpha.** A semi-transparent scatter draws the
+  ramp blended toward white — washed out and nothing like the viridis it is. Points are
+  opaque now, which sidesteps it; drop them below 1 and the colorbar needs
+  `cbar.solids.set_alpha(1.0)`.
+- **Mito colour is unclipped 0–100 on purpose.** Clipping at 25 made a 25% cell and a
+  90% cell the same yellow, collapsing the dead-cell population sitting at 75–90%. The
+  cost is a near-uniform purple manifold, which is accepted.
+- Fixes here have twice outlived their cause (a tick-count cap, the colorbar alpha
+  workaround). When a panel changes, check whether its workarounds still apply.
+
+### The QC report is a fan-in step, and stages its inputs
+
+`qc_report` is the only step that is not per-sample: it `toSortedList()`s every h5ad
+into one task. Two consequences worth keeping:
+
+- **Staging is the input contract.** Every h5ad is staged flat into the work dir and
+  the notebook globs `*.h5ad` from its own directory. There are no Quarto params, no
+  `notebook_registry.json`, and no `quarto_params.nf` — that machinery exists in
+  `xenium_nb` to validate params across many notebooks, and is not worth it for one
+  report. If a second notebook ever appears, revisit; until then, do not add it.
+- **The notebook reads `obs` only**, via `ad.read_h5ad(path, backed="r")`. The cohort's
+  X is ~5 GB and none of it is needed to plot QC metrics. Keep it backed.
+
+Sorting (`toSortedList`, not `collect`) makes the staged order — and so the report —
+reproducible regardless of upstream task completion order.
 
 ### Sample ids carry the design
 
@@ -51,8 +122,16 @@ endpoint.
 `sample,path`).
 
 ```bash
+# 1. build per-sample h5ads
 nextflow run main.nf --step create_adata -profile oscer --samplesheet assets/samplesheet.csv
+
+# 2. QC report over the cohort — point it at create_adata's handoff sheet
+nextflow run main.nf --step qc_report -profile oscer \
+    --samplesheet /scratch/$USER/sammy_r21_out/<run_id>/results/create_adata_samplesheet.csv
 ```
+
+The report lands at `<outdir>/qc_report/qc_report.pptx` (~193 KB with 2 samples), so it
+is a single `scp` to view off the cluster.
 
 Every artifact-producing step publishes a handoff samplesheet into `outdir`
 (`<step>_samplesheet.csv`) listing its outputs as `sample,path`, so the next step's
