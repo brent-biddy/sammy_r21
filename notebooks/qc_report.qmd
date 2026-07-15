@@ -7,6 +7,12 @@ format:
 execute:
   echo: false
   warning: false
+  # Sample sections are hardcoded but the staged samples vary (the test samplesheet
+  # is a 2-sample subset), so a section with no matching h5ad is an expected
+  # mismatch, not a failure. Let it land on its own slide as an error and render
+  # the rest. Note this also means a genuinely broken cell yields a deck with an
+  # error slide and an exit code of 0 — read the slides, not just the exit status.
+  error: true
 ---
 
 ```{python}
@@ -14,8 +20,12 @@ execute:
 from pathlib import Path
 
 import anndata as ad
+import matplotlib.pyplot as plt
 import pandas as pd
 from IPython.display import display, Markdown
+
+# The reference template is 16:9 at 10 x 5.625in; leave room for a slide title.
+FIGSIZE = (9.0, 4.3)
 
 # Every h5ad is staged into this notebook's working directory by the Nextflow
 # process, so globbing is the whole input contract — no params to pass or drift.
@@ -34,6 +44,36 @@ def load_obs(path):
     obs = adata.obs.copy()
     adata.file.close()
     return obs
+
+
+def qc_scatter(sample):
+    """One slide's figure: this sample's counts-vs-genes scatter, coloured by mito %.
+
+    The joint view is what separates debris from real cells — low-count/low-gene
+    points riding high on mitochondrial fraction sit off the main diagonal.
+    """
+    d = obs[obs["sample"] == sample]
+    fig, ax = plt.subplots(figsize=FIGSIZE)
+    scatter = ax.scatter(
+        d["total_counts"], d["n_genes_by_counts"],
+        c=d["pct_counts_mt"].clip(upper=25),
+        cmap="viridis", vmin=0, vmax=25,
+        s=2, alpha=0.35, edgecolors="none", rasterized=True,
+    )
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("Total counts", fontsize=9)
+    ax.set_ylabel("Genes detected", fontsize=9)
+    ax.set_title(f"{d['condition'].iloc[0]} · {len(d):,} cells · median {d['pct_counts_mt'].median():.1f}% mito",
+                 fontsize=9, loc="left")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.tick_params(labelsize=8)
+    cbar = fig.colorbar(scatter, ax=ax, fraction=0.03, pad=0.02)
+    cbar.set_label("Mito % (clipped at 25)", fontsize=8)
+    cbar.ax.tick_params(labelsize=7)
+    fig.tight_layout()
+    plt.show()
+    plt.close(fig)
 
 
 def md_table(df):
@@ -85,4 +125,94 @@ rows.append({
     "median mito %": f"{obs['pct_counts_mt'].median():.2f}",
 })
 md_table(pd.DataFrame(rows))
+```
+
+## normal_id_1
+
+```{python}
+qc_scatter("normal_id_1")
+```
+
+## normal_id_3
+
+```{python}
+qc_scatter("normal_id_3")
+```
+
+## normal_id_9
+
+```{python}
+qc_scatter("normal_id_9")
+```
+
+## normal_id_17
+
+```{python}
+qc_scatter("normal_id_17")
+```
+
+## normal_id_20
+
+```{python}
+qc_scatter("normal_id_20")
+```
+
+## normal_id_27
+
+```{python}
+qc_scatter("normal_id_27")
+```
+
+## normal_id_33
+
+```{python}
+qc_scatter("normal_id_33")
+```
+
+## normal_id_36
+
+```{python}
+qc_scatter("normal_id_36")
+```
+
+## normal_id_55
+
+```{python}
+qc_scatter("normal_id_55")
+```
+
+## normal_id_61
+
+```{python}
+qc_scatter("normal_id_61")
+```
+
+## obese_id_23
+
+```{python}
+qc_scatter("obese_id_23")
+```
+
+## obese_id_31
+
+```{python}
+qc_scatter("obese_id_31")
+```
+
+## obese_id_57
+
+```{python}
+qc_scatter("obese_id_57")
+```
+
+## obese_id_67
+
+```{python}
+qc_scatter("obese_id_67")
+```
+
+## obese_id_75
+
+```{python}
+qc_scatter("obese_id_75")
 ```
