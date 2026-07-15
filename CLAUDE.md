@@ -21,8 +21,23 @@ point, `main.nf`, selected with `--step`:
 - `qc_report` — renders `notebooks/qc_report.qmd` to `qc_report.pptx`: a cohort summary
   table, then per sample a section-header slide, a counts-vs-genes scatter coloured by
   mito %, and a 3-panel histogram (genes / counts / mito %). Read-only — it filters
-  nothing and writes no h5ad. This is the step to look at **before** choosing
-  clustering QC thresholds. Everything it plots comes off the **raw** count matrix.
+  nothing and writes no h5ad. This is the step to look at **before** choosing clustering
+  QC thresholds. Everything it plots comes off the **raw** count matrix.
+
+  `MITO_CANDIDATE` is a discussion aid, not a decision — nothing downstream reads it,
+  and the report filters nothing. It drives the summary table's `dropped ≥N%` column,
+  which is the only place discard rates can be compared across samples side by side;
+  the per-scatter tallies give the same numbers one sample at a time.
+
+  **Mito-retention curves were built and then removed** (cells discarded vs cutoff, one
+  line per sample, plus a per-sample grid). They did their job — the top of the colour
+  range is 70 because of what they showed — and were dropped once it was made. Do not
+  rebuild them speculatively; the finding is recorded under the mito colour bullet
+  below. What they were good for, if the question ever comes back: the curve is the
+  complement of the mito ECDF, so **its slope at a cutoff is the density of cells
+  sitting there** — a flat stretch is a gap between populations, a steep one is a dense
+  population being sliced, and a cutoff in a flat stretch is defensible precisely
+  because moving it ±10 changes nothing.
 
 **Sample sections are hardcoded**, one `# <sample>` block per sample, and currently
 cover only `normal_id_20` and `obese_id_23` — the two with h5ads built from the local
@@ -31,6 +46,9 @@ deliberate: generating headings dynamically needs `output: asis`, and under it a
 inline figure lands between the markdown blocks and leaves the *next* heading not
 starting its own line, so pandoc emits a literal `## sample` and drops the image. One
 cell per sample means `plt.show()` just works.
+
+The **summary table is not hardcoded** — it iterates `sample_order`, so it picks up the
+other 13 with no edit. Only the per-sample sections need adding.
 
 ### The QC report is a deck, and that constrains it
 
@@ -64,19 +82,29 @@ path.
 - **A log axis needs log-spaced bins.** `set_xscale("log")` with linear bins renders
   wildly uneven bar widths and misrepresents the distribution — and it looks plausible.
   The counts panel builds edges with `np.logspace`.
+- **Hidden subplots still reserve their space under `tight_layout`.** `set_visible(False)`
+  hides an axes; it does not reclaim its grid cell. A small-multiples grid with a fixed
+  column count and only the 2 test samples staged squeezed its panels into the left two
+  fifths of the slide and stranded `supxlabel` out to the right of them. Any future grid
+  wants `ncols = min(cap, len(sample_order))`.
 - **A colorbar inherits its mappable's alpha.** A semi-transparent scatter draws the
   ramp blended toward white — washed out and nothing like the viridis it is. Points are
   opaque now, which sidesteps it; drop them below 1 and the colorbar needs
   `cbar.solids.set_alpha(1.0)`.
-- **Mito colour steps across 30–60 and holds both ends flat.** The distribution is
+- **Mito colour steps across 30–70 and holds both ends flat.** The distribution is
   bottom-heavy (median ~4%), so a full 0–100 scale burns its range separating cells
   that are all equally fine and leaves the manifold a near-uniform purple.
-  `MITO_BINS = np.arange(30, 61, 10)` puts the resolution in the band where the
-  threshold call actually lives. Below 30 nothing is being decided; above 60 a cell is
-  dead either way and 65% vs 90% changes nothing.
+  `MITO_BINS = np.arange(30, 71, 10)` puts the resolution in the band where the
+  threshold call actually lives. Below 30 nothing is being decided; above 70 a cell is
+  dead either way and 75% vs 90% changes nothing.
+  - **The top end is 70 because the retention curves said so**, and they are gone now,
+    so this is the only record: the gap between the live and dead populations ran out to
+    ~72 in `normal_id_20` and ~85 in `obese_id_23`. A cell at 60–70 is still inside that
+    gap rather than in the dead cloud, so the earlier `>60` red was calling the question
+    early. Revisit if the other 13 close the gap sooner.
   - **The steps are the point, not decoration.** This panel exists to pick a mito
     cutoff, and a continuous ramp makes you eyeball where one colour *becomes*
-    another. Three 10-wide steps on round numbers put the candidate cutoffs in the
+    another. Four 10-wide steps on round numbers put the candidate cutoffs in the
     legend, so a band you can see is a number you can name. Do not smooth it back out.
   - **The bin edges and the annotated cutoffs are the same list** (`MITO_CUTOFFS =
     list(MITO_BINS)`), and that correspondence is load-bearing: every colorbar tick is a
@@ -87,14 +115,14 @@ path.
     it, not just 40–50 — so a `≥N` row covers every band from that tick up. It sits
     bottom-right, the one reliably empty corner, since the manifold runs bottom-left to
     top-right and the debris sits low and left of it.
-  - **Collapsing 30–60 to a single band was tried and rejected.** Only `>60` is
-    spatially separated — the 30–60 cells hug the underside of the manifold at every
+  - **Collapsing the steps to a single band was tried and rejected.** Only the red end
+    is spatially separated — the mid cells hug the underside of the manifold at every
     step width tried (5, 10) — which is an argument that the *data* has little structure
     there, not that the bands should go. Merging them breaks the tick-to-row pairing
     above and buys nothing.
   - **This is the inverse of the trap, not a repeat of it.** Clipping the *top* at 25
     once collapsed a 25% cell into a 90% one and hid the dead population entirely.
-    Clipping at 60 collapses only cells already past saving. Direction is everything
+    Clipping at 70 collapses only cells already past saving. Direction is everything
     here — do not "fix" this back to a full-range scale.
   - **The steps are Okabe-Ito, not a sampled colormap** (`MITO_STEP_COLORS`). A
     sequential ramp is built so neighbouring steps blend, which is precisely wrong when
@@ -109,7 +137,7 @@ path.
   - **`BoundaryNorm(..., extend="both")` maps the out-of-range regions to the
     colormap's own first and last entries**, so grey and red are ordinary members of
     the `ListedColormap` rather than `set_under`/`set_over`. Hence the list is
-    `len(MITO_BINS) + 1` — three bins plus two ends — and the colorbar must *not* be
+    `len(MITO_BINS) + 1` — four bins plus two ends — and the colorbar must *not* be
     passed `extend`, since it already takes it from the norm.
 - Fixes here have twice outlived their cause (a tick-count cap, the colorbar alpha
   workaround). When a panel changes, check whether its workarounds still apply.
