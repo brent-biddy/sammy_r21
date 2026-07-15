@@ -14,36 +14,14 @@ execute:
 from pathlib import Path
 
 import anndata as ad
-import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 from IPython.display import display, Markdown
-from matplotlib.lines import Line2D
-from scipy.stats import median_abs_deviation
 
 # Every h5ad is staged into this notebook's working directory by the Nextflow
 # process, so globbing is the whole input contract — no params to pass or drift.
 H5ADS = sorted(Path(".").glob("*.h5ad"))
 if not H5ADS:
     raise FileNotFoundError("No .h5ad files staged next to the notebook.")
-
-# Condition palette, carried over from oir-analysis so figures across the two
-# projects read the same. Teal/orange is a blue-orange axis, which stays separable
-# under the common red-green CVDs.
-COLORS = {"normal": "#2AABB8", "obese": "#E87D2A"}
-
-# The reference template is 16:9 at 10 x 5.625in. Every figure is sized to sit
-# inside one slide with room for its title — hence one metric per slide rather
-# than a tall stacked panel, which only works in a scrolling page.
-FIGSIZE = (9.5, 4.5)
-
-METRICS = {
-    "n_genes_by_counts": "Genes per cell",
-    "total_counts": "UMI counts per cell",
-    "pct_counts_mt": "Mitochondrial %",
-    "pct_counts_in_top_20_genes": "% counts in top 20 genes",
-}
-LOG_METRICS = {"n_genes_by_counts", "total_counts"}
 
 
 def load_obs(path):
@@ -70,39 +48,8 @@ def md_table(df):
     display(Markdown("\n".join([header, rule] + rows)))
 
 
-def violin_slide(metric, label):
-    """One slide: this metric's distribution across every sample, coloured by condition."""
-    fig, ax = plt.subplots(figsize=FIGSIZE)
-    data = [obs.loc[obs["sample"] == s, metric].to_numpy() for s in sample_order]
-    parts = ax.violinplot(data, showextrema=False, widths=0.85)
-    for body, s in zip(parts["bodies"], sample_order):
-        body.set_facecolor(COLORS[sample_condition[s]])
-        body.set_alpha(0.75)
-        body.set_edgecolor("none")
-    # Median as a thin white tick — a violin hides the centre, and the centre is
-    # what the threshold conversation is about.
-    ax.scatter(range(1, len(data) + 1), [np.median(d) for d in data],
-               marker="_", s=90, color="white", zorder=3, linewidths=1.4)
-
-    if metric in LOG_METRICS:
-        ax.set_yscale("log")
-    ax.set_xticks(range(1, len(sample_order) + 1))
-    ax.set_xticklabels(sample_order, rotation=45, ha="right", fontsize=8)
-    ax.set_ylabel(label, fontsize=9)
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.grid(axis="y", alpha=0.25, linewidth=0.5)
-    ax.set_axisbelow(True)
-    handles = [Line2D([0], [0], marker="s", linestyle="", markersize=8,
-                      markerfacecolor=c, markeredgecolor="none", label=k)
-               for k, c in COLORS.items()]
-    ax.legend(handles=handles, frameon=False, loc="upper right", fontsize=8)
-    fig.tight_layout()
-    plt.show()
-
-
 obs = pd.concat([load_obs(p) for p in H5ADS], ignore_index=True)
-# Order samples by condition then id so the panels read as two blocks, and every
-# figure shares one sample order.
+# Order samples by condition then id so the table reads as two blocks.
 obs["id_num"] = obs["id"].astype(int)
 sample_order = (
     obs[["sample", "condition", "id_num"]]
@@ -110,21 +57,7 @@ sample_order = (
     .sort_values(["condition", "id_num"])["sample"]
     .tolist()
 )
-obs["sample"] = pd.Categorical(obs["sample"], categories=sample_order, ordered=True)
 sample_condition = obs.drop_duplicates("sample").set_index("sample")["condition"].to_dict()
-n_cells = len(obs)
-```
-
-## Cohort
-
-```{python}
-lines = [f"**{len(sample_order)} samples · {n_cells:,} cells** (pre-filter)", ""]
-for c in COLORS:
-    d = obs[obs["condition"] == c]
-    lines.append(f"- **{c}**: {d['sample'].nunique()} samples, {len(d):,} cells")
-lines += ["", "Every barcode Cell Ranger called is included — `create_adata` filters nothing,",
-          "so these are the raw distributions the filtering decision gets made against."]
-display(Markdown("\n".join(lines)))
 ```
 
 ## Per-sample summary
@@ -141,121 +74,15 @@ for s in sample_order:
         "median counts": f"{round(d['total_counts'].median()):,}",
         "median mito %": f"{d['pct_counts_mt'].median():.2f}",
     })
-md_table(pd.DataFrame(rows))
-```
-
-## Genes per cell
-
-```{python}
-violin_slide("n_genes_by_counts", "Genes per cell")
-```
-
-## UMI counts per cell
-
-```{python}
-violin_slide("total_counts", "UMI counts per cell")
-```
-
-## Mitochondrial %
-
-```{python}
-violin_slide("pct_counts_mt", "Mitochondrial %")
-```
-
-## % counts in top 20 genes
-
-```{python}
-violin_slide("pct_counts_in_top_20_genes", "% counts in top 20 genes")
-```
-
-## Per-sample QC scatter
-
-```{python}
-n_cols = 5
-n_rows = int(np.ceil(len(sample_order) / n_cols))
-fig, axes = plt.subplots(n_rows, n_cols, figsize=FIGSIZE, sharex=True, sharey=True)
-axes = np.atleast_1d(axes).ravel()
-
-for ax, s in zip(axes, sample_order):
-    d = obs[obs["sample"] == s]
-    sc = ax.scatter(
-        d["total_counts"], d["n_genes_by_counts"],
-        c=d["pct_counts_mt"].clip(upper=25),
-        cmap="viridis", vmin=0, vmax=25,
-        s=1.0, alpha=0.35, edgecolors="none", rasterized=True,
-    )
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.set_title(f"{s}\n{len(d):,} cells", fontsize=6, color=COLORS[sample_condition[s]])
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.tick_params(labelsize=5)
-
-for ax in axes[len(sample_order):]:
-    ax.set_visible(False)
-
-fig.supxlabel("Total counts", fontsize=8)
-fig.supylabel("Genes detected", fontsize=8)
-cbar = fig.colorbar(sc, ax=axes.tolist(), fraction=0.02, pad=0.02)
-cbar.set_label("Mito % (clipped at 25)", fontsize=6)
-cbar.ax.tick_params(labelsize=5)
-plt.show()
-```
-
-::: {.notes}
-Low-count/low-gene points in the bottom-left with high mitochondrial fraction are the
-debris population the thresholds are meant to cut. The main manifold is the diagonal.
-:::
-
-## Suggested per-sample thresholds (MAD-based)
-
-```{python}
-def mad_bounds(values, n_mads, log=False):
-    """Return (lower, upper) cutoffs at median ± n_mads · MAD, on the original scale."""
-    v = np.log1p(values) if log else np.asarray(values, dtype=float)
-    med = np.median(v)
-    mad = median_abs_deviation(v)
-    lo, hi = med - n_mads * mad, med + n_mads * mad
-    return (np.expm1(lo), np.expm1(hi)) if log else (lo, hi)
-
-
-rows = []
-total_drop = 0
-for s in sample_order:
-    d = obs[obs["sample"] == s]
-    genes_lo, genes_hi = mad_bounds(d["n_genes_by_counts"], 5, log=True)
-    counts_lo, counts_hi = mad_bounds(d["total_counts"], 5, log=True)
-    _mito_lo, mito_hi = mad_bounds(d["pct_counts_mt"], 3)
-
-    drop = (
-        (d["n_genes_by_counts"] < genes_lo) | (d["n_genes_by_counts"] > genes_hi)
-        | (d["total_counts"] < counts_lo) | (d["total_counts"] > counts_hi)
-        | (d["pct_counts_mt"] > mito_hi)
-    )
-    total_drop += int(drop.sum())
-    rows.append({
-        "sample": s,
-        "min genes": f"{round(genes_lo):,}",
-        "max genes": f"{round(genes_hi):,}",
-        "min counts": f"{round(counts_lo):,}",
-        "max counts": f"{round(counts_hi):,}",
-        "max mito %": f"{mito_hi:.1f}",
-        "drop": f"{int(drop.sum()):,}",
-        "% drop": f"{100 * drop.mean():.1f}",
-    })
 # Cohort total as a final row, not trailing prose: any text after the table gets
 # pushed onto a slide of its own, titled with its first sentence fragment.
 rows.append({
-    "sample": "cohort", "min genes": "", "max genes": "", "min counts": "",
-    "max counts": "", "max mito %": "",
-    "drop": f"{total_drop:,}", "% drop": f"{100 * total_drop / n_cells:.1f}",
+    "sample": "cohort",
+    "condition": "",
+    "cells": f"{len(obs):,}",
+    "median genes": f"{round(obs['n_genes_by_counts'].median()):,}",
+    "median counts": f"{round(obs['total_counts'].median()):,}",
+    "median mito %": f"{obs['pct_counts_mt'].median():.2f}",
 })
 md_table(pd.DataFrame(rows))
 ```
-
-::: {.notes}
-Each sample's cutoffs derive from its own distribution: median ± N·MAD, computed on
-log1p for the count and gene metrics (right-skewed, so a symmetric band only makes
-sense in log space) and on the raw scale for mitochondrial %. sc-best-practices
-formulation: 5 MADs for counts/genes, 3 for mito. A starting point, not an answer —
-read against the plots and override per sample where the data disagrees.
-:::
