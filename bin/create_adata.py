@@ -22,43 +22,12 @@ Usage:
 """
 
 import argparse
-import re
 
 import pandas as pd
 import scanpy as sc
 import session_info
 
 from timer import timer, timing_summary
-
-# Sample ids are <condition>_id_<study_id>, e.g. normal_id_1 or obese_id_23. The
-# condition is deliberately not enumerated here: a new group should not have to
-# edit this pattern, and the samplesheet is the list of what exists.
-SAMPLE_ID_RE = re.compile(r"^(?P<condition>[^_]+)_id_(?P<id>.+)$")
-
-
-def parse_sample_id(sample: str) -> tuple[str, str]:
-    """Split a sample identifier into its condition and study id.
-
-    Args:
-        sample: Sample identifier of the form <condition>_id_<study_id>,
-            e.g. "normal_id_1".
-
-    Returns:
-        A (condition, study_id) tuple — e.g. ("normal", "1").
-
-    Raises:
-        ValueError: If sample does not match the expected form. Raising beats
-            falling back to a default: condition is what every group comparison
-            keys on, so a quietly mis-parsed id would produce an object that
-            looks fine and compares the wrong cells.
-    """
-    match = SAMPLE_ID_RE.match(sample)
-    if match is None:
-        raise ValueError(
-            f"Sample id {sample!r} does not match the expected "
-            f"<condition>_id_<study_id> form (e.g. 'normal_id_1')."
-        )
-    return match["condition"], match["id"]
 
 
 def parse_args():
@@ -83,9 +52,10 @@ def main():
 
     output_path = f"{args.sample}.h5ad"
 
-    # Parse before reading the matrix so a malformed sample id fails in seconds
-    # rather than after a multi-minute read.
-    condition, study_id = parse_sample_id(args.sample)
+    # Sample ids are <condition>_id_<study_id>, e.g. normal_id_1. Unpacking raises
+    # ValueError on anything else, which is what we want and happens here, before
+    # the slow matrix read.
+    condition, id_token, study_id = args.sample.split("_")
 
     print(f"Sample:    {args.sample}")
     print(f"Id:        {study_id}")

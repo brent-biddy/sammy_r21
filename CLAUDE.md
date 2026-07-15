@@ -22,23 +22,22 @@ point, `main.nf`, selected with `--step`:
 ### Sample ids carry the design
 
 Sample ids are `<condition>_id_<study_id>` (e.g. `normal_id_1`, `obese_id_23`).
-`bin/create_adata.py` splits that into the three obs columns via `parse_sample_id()`,
-so the samplesheet stays `sample,path` and the design is not restated anywhere.
+`bin/create_adata.py` gets the three obs columns from a plain
+`args.sample.split("_")` in `main()` — no helper, no regex — so the samplesheet stays
+`sample,path` and the design is not restated anywhere.
 
-The pattern (`^(?P<condition>[^_]+)_id_(?P<id>.+)$`) deliberately does not enumerate
-the conditions — adding a group should not mean editing a regex, and the samplesheet
-is the list of what exists. A sample id that does not match **raises**; it is never
-defaulted or partially parsed, because condition is what every group comparison keys
-on and a quietly mis-parsed id yields an object that looks fine while comparing the
-wrong cells. The parse happens before the matrix is read, so a bad id fails in seconds
-rather than after a multi-minute read.
+Keep it that simple. The three-way unpack is the validation: an id with the wrong
+number of underscore-separated parts raises `ValueError` on its own, before the slow
+matrix read, and that is the failure that matters. Do not add a helper or a pattern to
+catch narrower typos (`normal_id_` parses to an empty id; `normal_ID_1` is accepted) —
+those were considered and judged not worth the machinery.
 
 `id` is stored as a string, not an int — it is a label to group and join on (e.g.
 against clinical metadata keyed on StudyID), never a quantity to average.
 
 This makes the sample id load-bearing: **renaming a sample silently changes its
 `condition`.** If ids ever stop encoding the design, move `condition` to an explicit
-samplesheet column rather than loosening the regex.
+samplesheet column rather than making the parse cleverer.
 
 **Samples are clustered individually first — there is no concat step**, and one is not
 planned until per-sample clustering says whether merging is warranted. `create_adata`
