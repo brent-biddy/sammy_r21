@@ -1,0 +1,13 @@
+name: sammy_r21
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - anndata
+  - jupyter
+  - pandas
+  - quarto
+  - python-igraph
+  - scanpy
+  - scipy

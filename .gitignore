@@ -1,0 +1,35 @@
+# Data - kept locally, never tracked (scripts create data/ as needed)
+data/
+*.h5ad
+*.h5
+*.rds
+*.RData
+*.csv.gz
+*.tsv.gz
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+env/
+*.egg-info/
+
+# Quarto
+/_freeze/
+/.quarto/
+*_files/
+*.quarto_ipynb
+*.pptx
+!resources/ouhsc_ppt_template.pptx
+
+# Docs kept locally, not tracked
+docs/
+
+# OS
+.DS_Store
