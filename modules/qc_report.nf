@@ -5,7 +5,7 @@ def qcReportPublishDir() {
 }
 
 process QC_REPORT {
-    tag "${h5ads.size()} samples"
+    tag "QC_REPORT"
 
     // 'copy' not 'link': the report is small and is the thing you scp off the
     // cluster, so it should survive the work dir being cleaned.
