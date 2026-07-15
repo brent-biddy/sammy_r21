@@ -275,6 +275,62 @@ md_table(pd.DataFrame(rows))
 ```
 
 
+# normal_id_1
+
+## Counts vs genes
+
+```{python}
+qc_scatter("normal_id_1")
+```
+
+## QC distributions
+
+```{python}
+qc_hists("normal_id_1")
+```
+
+# normal_id_3
+
+## Counts vs genes
+
+```{python}
+qc_scatter("normal_id_3")
+```
+
+## QC distributions
+
+```{python}
+qc_hists("normal_id_3")
+```
+
+# normal_id_9
+
+## Counts vs genes
+
+```{python}
+qc_scatter("normal_id_9")
+```
+
+## QC distributions
+
+```{python}
+qc_hists("normal_id_9")
+```
+
+# normal_id_17
+
+## Counts vs genes
+
+```{python}
+qc_scatter("normal_id_17")
+```
+
+## QC distributions
+
+```{python}
+qc_hists("normal_id_17")
+```
+
 # normal_id_20
 
 ## Counts vs genes
@@ -289,6 +345,76 @@ qc_scatter("normal_id_20")
 qc_hists("normal_id_20")
 ```
 
+# normal_id_27
+
+## Counts vs genes
+
+```{python}
+qc_scatter("normal_id_27")
+```
+
+## QC distributions
+
+```{python}
+qc_hists("normal_id_27")
+```
+
+# normal_id_33
+
+## Counts vs genes
+
+```{python}
+qc_scatter("normal_id_33")
+```
+
+## QC distributions
+
+```{python}
+qc_hists("normal_id_33")
+```
+
+# normal_id_36
+
+## Counts vs genes
+
+```{python}
+qc_scatter("normal_id_36")
+```
+
+## QC distributions
+
+```{python}
+qc_hists("normal_id_36")
+```
+
+# normal_id_55
+
+## Counts vs genes
+
+```{python}
+qc_scatter("normal_id_55")
+```
+
+## QC distributions
+
+```{python}
+qc_hists("normal_id_55")
+```
+
+# normal_id_61
+
+## Counts vs genes
+
+```{python}
+qc_scatter("normal_id_61")
+```
+
+## QC distributions
+
+```{python}
+qc_hists("normal_id_61")
+```
+
 # obese_id_23
 
 ## Counts vs genes
@@ -301,4 +427,60 @@ qc_scatter("obese_id_23")
 
 ```{python}
 qc_hists("obese_id_23")
+```
+
+# obese_id_31
+
+## Counts vs genes
+
+```{python}
+qc_scatter("obese_id_31")
+```
+
+## QC distributions
+
+```{python}
+qc_hists("obese_id_31")
+```
+
+# obese_id_57
+
+## Counts vs genes
+
+```{python}
+qc_scatter("obese_id_57")
+```
+
+## QC distributions
+
+```{python}
+qc_hists("obese_id_57")
+```
+
+# obese_id_67
+
+## Counts vs genes
+
+```{python}
+qc_scatter("obese_id_67")
+```
+
+## QC distributions
+
+```{python}
+qc_hists("obese_id_67")
+```
+
+# obese_id_75
+
+## Counts vs genes
+
+```{python}
+qc_scatter("obese_id_75")
+```
+
+## QC distributions
+
+```{python}
+qc_hists("obese_id_75")
 ```
