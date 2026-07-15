@@ -39,13 +39,21 @@ point, `main.nf`, selected with `--step`:
   population being sliced, and a cutoff in a flat stretch is defensible precisely
   because moving it ±10 changes nothing.
 
-**Sample sections are hardcoded**, one `# <sample>` block per sample, and currently
-cover only `normal_id_20` and `obese_id_23` — the two with h5ads built from the local
-`~/R21` copy. Add the other 13 when the cohort is built on OSCER. Hardcoding is
-deliberate: generating headings dynamically needs `output: asis`, and under it an
-inline figure lands between the markdown blocks and leaves the *next* heading not
-starting its own line, so pandoc emits a literal `## sample` and drops the image. One
-cell per sample means `plt.show()` just works.
+**Sample sections are hardcoded**, one `# <sample>` block per sample, and all 15 are now
+present in samplesheet order (condition, then ascending id — the same order
+`sample_order` produces). Hardcoding is deliberate: generating headings dynamically
+needs `output: asis`, and under it an inline figure lands between the markdown blocks
+and leaves the *next* heading not starting its own line, so pandoc emits a literal
+`## sample` and drops the image. One cell per sample means `plt.show()` just works.
+Regenerate them from `assets/samplesheet.csv` rather than typing ids by hand.
+
+**A `local`-profile render now yields 26 error slides**, because only `normal_id_20` and
+`obese_id_23` have h5ads built from the local `~/R21` copy and the other 13 sections
+have nothing to plot. That is `execute: error: true` working — each missing section
+fails on its own slide instead of taking the deck down — but it does mean the local test
+render is no longer a clean deck to read. Check the two real samples' figures and that
+the error count is exactly 26 (13 samples × 2 content slides); anything else is a real
+break.
 
 The **summary table is not hardcoded** — it iterates `sample_order`, so it picks up the
 other 13 with no edit. Only the per-sample sections need adding.
