@@ -28,7 +28,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from IPython.display import display, Markdown
-from matplotlib.ticker import MaxNLocator
 
 # The reference template is 16:9 at 10 x 5.625in; leave room for a slide title.
 FIGSIZE = (9.0, 4.3)
@@ -110,9 +109,10 @@ def qc_hists(sample, bins=100):
     calculate_qc_metrics on the unnormalized X with log1p=False, so there is no
     normalized variant of these columns to pick up by mistake.
 
-    Linear x, and y is a cell count rather than a density, so bar heights are the
-    actual number of cells. Each panel keeps its own y scale: the three metrics bin
-    differently, and a shared axis would flatten two of them to nothing.
+    y is a cell count rather than a density, so bar heights are the actual number of
+    cells. Each panel keeps its own y scale: the three metrics bin differently, and a
+    shared axis would flatten two of them to nothing. x scale is per-metric — see
+    HIST_METRICS.
     """
     d = obs[obs["sample"] == sample]
     color = COLORS[d["condition"].iloc[0]]
@@ -137,11 +137,6 @@ def qc_hists(sample, bins=100):
         ax.set_xlabel(label, fontsize=8)
         if log_x:
             ax.set_xscale("log")
-        else:
-            # A third of a slide is not wide enough for matplotlib's default tick
-            # count — the labels collide into an unreadable smear. (A log axis has
-            # its own decade locator and must not get this.)
-            ax.xaxis.set_major_locator(MaxNLocator(4))
         ax.spines[["top", "right"]].set_visible(False)
         ax.tick_params(labelsize=7)
         ax.grid(axis="y", alpha=0.25, linewidth=0.5)
