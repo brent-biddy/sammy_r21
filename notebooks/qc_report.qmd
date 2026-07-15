@@ -28,6 +28,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from IPython.display import display, Markdown
+from matplotlib.colors import BoundaryNorm, ListedColormap
 
 # The reference template is 16:9 at 10 x 5.625in; leave room for a slide title.
 FIGSIZE = (9.0, 4.3)
@@ -36,6 +37,56 @@ FIGSIZE = (9.0, 4.3)
 # projects read the same. Teal/orange is a blue-orange axis, which stays separable
 # under the common red-green CVDs.
 COLORS = {"normal": "#2AABB8", "obese": "#E87D2A"}
+
+# Mito % colour spends its whole range on 30-70 and holds both ends flat. The
+# distribution is extremely bottom-heavy (median ~4%), so a full 0-100 scale burns its
+# range separating cells that are all equally fine and leaves the manifold a
+# near-uniform purple. Below 30 nothing is being decided, and above 70 a cell is dead
+# either way — telling 75% from 90% changes no threshold. 30-70 is the band where the
+# call actually lives, so that is where the resolution goes.
+#
+# The top end is 70 rather than 60 because the retention curves put the gap between the
+# live and dead populations out at ~72 (normal_id_20) and ~85 (obese_id_23): a cell at
+# 60-70 is still in that gap, not in the dead cloud, so colouring it as dead was calling
+# the question early. Revisit if the other 13 samples close the gap sooner.
+#
+# Note this is the inverse of the trap in this panel's history, not a repeat of it:
+# clipping the TOP at 25 collapsed a 25% cell into a 90% one and hid the dead
+# population. Clipping at 70 collapses only cells that are already past saving.
+#
+# Discrete steps, not a smooth ramp: this panel exists to pick a mito threshold, and a
+# continuous ramp makes you eyeball where one colour "becomes" another. Steps put the
+# candidate cutoffs in the legend itself, so a band you can see is a number you can
+# name. Four 10-wide steps on round numbers — the cutoff is going to be one of these.
+#
+# These edges ARE the cutoffs mito_tally reports, and that correspondence is the point:
+# every tick on the colorbar is a row in the annotation, so a band you can see is a
+# number you can read off the same slide. Change one and change the other.
+MITO_BINS = np.arange(30, 71, 10)  # 30, 40, 50, 60, 70 -> 4 interior bins
+MITO_CUTOFFS = list(MITO_BINS)
+# Okabe-Ito, not a sampled colormap: a sequential ramp is built so neighbouring steps
+# blend, which is precisely wrong when the question is which band a point falls in.
+# These are a qualitative set chosen to stay separable under every CVD type. The cost is
+# losing the "higher = worse" read — you consult the legend instead of just seeing that
+# darker is worse — which is worth it at this few bands with the legend right there.
+# Every step also has to clear grey below and red above, so the orange-to-crimson corner
+# of Okabe-Ito is unusable here however nice #D55E00 looks.
+MITO_STEP_COLORS = ["#0072B2", "#009E73", "#F0E442", "#CC79A7"]  # blue, green, yellow, purple
+# Both flat ends need to be distinct from the step colours, or the boundary is invisible
+# and a 29% cell looks like a 31% one. Grey under makes the manifold recede — it is not
+# the question — and red over reads as dead against steps that never go red.
+#
+# extend="both" makes BoundaryNorm map the out-of-range regions to the colormap's own
+# first and last entries, so grey and red are ordinary colours in the list rather than
+# set_under/set_over. That is why the list is len(MITO_BINS)+1: 4 bins plus two ends.
+MITO_CMAP = ListedColormap(["#D9D9D9", *MITO_STEP_COLORS, "#C1272D"])
+MITO_NORM = BoundaryNorm(MITO_BINS, MITO_CMAP.N, extend="both")
+
+# The cutoff currently under discussion. Not a decision and nothing downstream reads it
+# — the report filters nothing. It drives the summary table's "dropped >=N%" column,
+# which is the only place discard rates can be compared across samples side by side; the
+# per-scatter tallies give the same numbers one sample at a time.
+MITO_CANDIDATE = 50
 
 # Every h5ad is staged into this notebook's working directory by the Nextflow
 # process, so globbing is the whole input contract — no params to pass or drift.
@@ -56,6 +107,19 @@ def load_obs(path):
     return obs
 
 
+def mito_tally(values):
+    """Cumulative cells at or above each candidate mito cutoff, as display lines.
+
+    Cumulative rather than per-band because the question is "what do I lose if I cut
+    here", and a cut at 40 discards everything above it, not just 40-50.
+    """
+    lines = []
+    for cutoff in MITO_CUTOFFS:
+        n = int((values >= cutoff).sum())
+        lines.append(f"≥{cutoff}%:{n:>6,} ({n / len(values) * 100:4.1f}%)")
+    return lines
+
+
 def qc_scatter(sample):
     """One slide's figure: this sample's counts-vs-genes scatter, coloured by mito %.
 
@@ -67,11 +131,8 @@ def qc_scatter(sample):
     scatter = ax.scatter(
         d["total_counts"], d["n_genes_by_counts"],
         c=d["pct_counts_mt"],
-        # Full 0-100, unclipped: the colour means the actual mitochondrial fraction.
-        # The median is ~4%, so the manifold sits low on the ramp and the dead cells
-        # up at 75-90% stay visibly distinct rather than saturating with everything
-        # above an arbitrary cutoff.
-        cmap="viridis", vmin=0, vmax=100,
+        # Stepped over 30-60, flat outside it — see MITO_BINS.
+        cmap=MITO_CMAP, norm=MITO_NORM,
         s=3, alpha=1.0, edgecolors="none", rasterized=True,
     )
     ax.set_xscale("log")
@@ -82,9 +143,23 @@ def qc_scatter(sample):
                  fontsize=9, loc="left")
     ax.spines[["top", "right"]].set_visible(False)
     ax.tick_params(labelsize=8)
-    # Note the colorbar inherits the mappable's alpha: drop the scatter below 1 and
-    # the ramp renders blended toward white, washed out and nothing like viridis.
+
+    # One row per colorbar tick: the colour shows where those cells sit, the number says
+    # how many there are. Bottom right is the one reliably empty corner — the manifold
+    # runs bottom-left to top-right and the debris sits low and left of it. Monospace so
+    # the columns line up.
+    ax.text(0.99, 0.03, "\n".join(mito_tally(d["pct_counts_mt"])),
+            transform=ax.transAxes, ha="right", va="bottom",
+            fontsize=7, family="monospace", linespacing=1.5,
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
+                      edgecolor="#CCCCCC", linewidth=0.5))
+
+    # Note the colorbar inherits the mappable's alpha: drop the scatter below 1 and the
+    # bands render blended toward white. The norm's extend="both" already tells the
+    # colorbar to draw the flat ends as arrowheads, so passing extend here too would
+    # conflict.
     cbar = fig.colorbar(scatter, ax=ax, fraction=0.03, pad=0.02)
+    cbar.set_ticks(MITO_BINS)
     cbar.set_label("Mitochondrial % of counts", fontsize=8)
     cbar.ax.tick_params(labelsize=7)
     fig.tight_layout()
@@ -176,29 +251,29 @@ sample_condition = obs.drop_duplicates("sample").set_index("sample")["condition"
 ## Per-sample summary
 
 ```{python}
-rows = []
-for s in sample_order:
-    d = obs[obs["sample"] == s]
-    rows.append({
-        "sample": s,
-        "condition": sample_condition[s],
+def summary_row(label, condition, d):
+    """One row of the summary table, for a sample or for the pooled cohort."""
+    mt = d["pct_counts_mt"]
+    return {
+        "sample": label,
+        "condition": condition,
         "cells": f"{len(d):,}",
         "median genes": f"{round(d['n_genes_by_counts'].median()):,}",
         "median counts": f"{round(d['total_counts'].median()):,}",
-        "median mito %": f"{d['pct_counts_mt'].median():.2f}",
-    })
+        "median mito %": f"{mt.median():.2f}",
+        # The per-sample number behind the retention curve, which is coloured by
+        # condition and so cannot name an outlier itself.
+        f"dropped ≥{MITO_CANDIDATE}%": f"{(mt >= MITO_CANDIDATE).mean() * 100:.1f}%",
+    }
+
+
+rows = [summary_row(s, sample_condition[s], obs[obs["sample"] == s]) for s in sample_order]
 # Cohort total as a final row, not trailing prose: any text after the table gets
 # pushed onto a slide of its own, titled with its first sentence fragment.
-rows.append({
-    "sample": "cohort",
-    "condition": "",
-    "cells": f"{len(obs):,}",
-    "median genes": f"{round(obs['n_genes_by_counts'].median()):,}",
-    "median counts": f"{round(obs['total_counts'].median()):,}",
-    "median mito %": f"{obs['pct_counts_mt'].median():.2f}",
-})
+rows.append(summary_row("cohort", "", obs))
 md_table(pd.DataFrame(rows))
 ```
+
 
 # normal_id_20
 
