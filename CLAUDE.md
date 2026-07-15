@@ -68,9 +68,23 @@ Defined in `nextflow.config`:
 | `oscer` | SLURM on OSCER HPC, Apptainer | same image, 16 CPUs, memory retries 48→96→144 GB |
 
 `oscer` is the real target — the Cell Ranger matrices in `assets/samplesheet.csv` are
-on `/ourdisk/hpc/lilab/babiddy/dont_archive/sammy_r21/`, which is not reachable from a
-laptop. The container is reused from `xenium_nb`; it carries the scanpy + session-info
-stack `bin/create_adata.py` needs, and it already ran this exact step there.
+on `/ourdisk/hpc/lilab/babiddy/dont_archive/sammy_r21/`. The container is reused from
+`xenium_nb`; it carries the scanpy + session-info stack `bin/create_adata.py` needs.
+
+A **local copy of all 15 raw samples** lives in `~/R21/`, laid out exactly like the
+OSCER tree (same sample dirs, same `filtered_feature_bc_matrix_*` subdirs — only the
+root differs), so a test sheet is the OSCER one with the prefix rewritten.
+`assets/test_samplesheet.csv` is that: two samples, one per condition
+(`normal_id_20`, `obese_id_23` — the smallest of each), and it is what the `local`
+profile defaults to:
+
+```bash
+nextflow run main.nf --step create_adata -profile local   # uses assets/test_samplesheet.csv
+```
+
+Verified end-to-end on this data (2026-07-15): both samples produce h5ads with the
+right obs, and the mito regex flags exactly the expected 13 protein-coding genes on
+the real reference.
 
 **Run directories.** The `local` and `oscer` profiles set their own `workDir` and
 `outdir` so nothing lands in the repo. Each run gets one self-contained directory,
