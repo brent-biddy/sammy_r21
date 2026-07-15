@@ -10,8 +10,8 @@ with the raw matrices living on OSCER scratch. All steps run through a single en
 point, `main.nf`, selected with `--step`:
 
 - `create_adata` — converts a Cell Ranger `filtered_feature_bc_matrix` directory into
-  a sample-level `<sample>.h5ad`. Attaches `sample` and `condition` to every cell in
-  `obs` (both `Categorical`), and annotates per-cell/per-gene QC metrics
+  a sample-level `<sample>.h5ad`. Attaches `sample`, `id`, and `condition` to every
+  cell in `obs` (all `Categorical`), and annotates per-cell/per-gene QC metrics
   (`total_counts`, `n_genes_by_counts`, `pct_counts_mt`, `percent_top`) but **filters
   nothing** — it produces the raw artifact and leaves thresholds to downstream
   analysis. Mito genes are auto-detected from the gene symbols with a case-insensitive
@@ -19,12 +19,26 @@ point, `main.nf`, selected with `--step`:
   the `xenium_nb` pipeline, where it was the odd one out (scRNA-seq, not Xenium) and
   nothing consumed its h5ad.
 
-`condition` comes from a required samplesheet column, not from parsing the sample ID.
-The ID prefix and the input path both happen to encode it for this cohort, but an
-explicit column is what makes each h5ad self-describing — downstream code reads
-`adata.obs["condition"]` and never re-reads the samplesheet or splits strings. It is
-required rather than defaulted because a silently-missing condition yields an object
-that looks fine but cannot be compared across groups.
+### Sample ids carry the design
+
+Sample ids are `<condition>_id_<study_id>` (e.g. `normal_id_1`, `obese_id_23`).
+`bin/create_adata.py` splits that into the three obs columns via `parse_sample_id()`,
+so the samplesheet stays `sample,path` and the design is not restated anywhere.
+
+The pattern (`^(?P<condition>[^_]+)_id_(?P<id>.+)$`) deliberately does not enumerate
+the conditions — adding a group should not mean editing a regex, and the samplesheet
+is the list of what exists. A sample id that does not match **raises**; it is never
+defaulted or partially parsed, because condition is what every group comparison keys
+on and a quietly mis-parsed id yields an object that looks fine while comparing the
+wrong cells. The parse happens before the matrix is read, so a bad id fails in seconds
+rather than after a multi-minute read.
+
+`id` is stored as a string, not an int — it is a label to group and join on (e.g.
+against clinical metadata keyed on StudyID), never a quantity to average.
+
+This makes the sample id load-bearing: **renaming a sample silently changes its
+`condition`.** If ids ever stop encoding the design, move `condition` to an explicit
+samplesheet column rather than loosening the regex.
 
 **Samples are clustered individually first — there is no concat step**, and one is not
 planned until per-sample clustering says whether merging is warranted. `create_adata`
@@ -35,7 +49,7 @@ endpoint.
 
 ### Run a step
 `--samplesheet` is always required; columns vary by step (`create_adata` takes
-`sample,condition,path`).
+`sample,path`).
 
 ```bash
 nextflow run main.nf --step create_adata -profile oscer --samplesheet assets/samplesheet.csv

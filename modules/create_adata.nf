@@ -17,7 +17,7 @@ process CREATE_ADATA {
         saveAs: { fn -> fn.endsWith('.samplesheet_row.csv') ? null : fn }
 
     input:
-    tuple val(sample), val(condition), path(input_path)
+    tuple val(sample), path(input_path)
 
     output:
     tuple val(sample), path("${sample}.h5ad"), emit: artifacts
@@ -34,7 +34,7 @@ process CREATE_ADATA {
     export TMPDIR="\$PWD/tmp"
     mkdir -p "\$XDG_CACHE_HOME" "\$TMPDIR"
 
-    create_adata.py --sample ${sample} --condition ${condition} --path ${input_path}
+    create_adata.py --sample ${sample} --path ${input_path}
 
     printf '%s' '${sample},${createAdataPublishDir(sample)}/${sample}.h5ad' > ${sample}.samplesheet_row.csv
     """

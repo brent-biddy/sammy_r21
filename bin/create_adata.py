@@ -9,18 +9,20 @@ the raw artifact consumed by downstream clustering, which owns its own QC
 thresholds. Mitochondrial genes are detected from the gene symbols themselves,
 so no species argument is needed.
 
-The sample identifier and its experimental condition are attached to every cell
-in obs, so each h5ad is self-describing and downstream code never has to recover
-the design by parsing sample IDs or re-reading the samplesheet.
+The sample identifier encodes the design as <condition>_id_<study_id> (e.g.
+normal_id_1). It is split into its parts and all three — sample, id, condition —
+are attached to every cell in obs, so each h5ad is self-describing and downstream
+code never has to re-read the samplesheet or split strings itself.
 
 Writes <sample>.h5ad into the current working directory, alongside timing and
 session info files.
 
 Usage:
-    create_adata.py --sample S1 --condition normal --path /data/S1/outs/filtered_feature_bc_matrix
+    create_adata.py --sample normal_id_1 --path /data/S1/outs/filtered_feature_bc_matrix
 """
 
 import argparse
+import re
 
 import pandas as pd
 import scanpy as sc
@@ -28,16 +30,45 @@ import session_info
 
 from timer import timer, timing_summary
 
+# Sample ids are <condition>_id_<study_id>, e.g. normal_id_1 or obese_id_23. The
+# condition is deliberately not enumerated here: a new group should not have to
+# edit this pattern, and the samplesheet is the list of what exists.
+SAMPLE_ID_RE = re.compile(r"^(?P<condition>[^_]+)_id_(?P<id>.+)$")
+
+
+def parse_sample_id(sample: str) -> tuple[str, str]:
+    """Split a sample identifier into its condition and study id.
+
+    Args:
+        sample: Sample identifier of the form <condition>_id_<study_id>,
+            e.g. "normal_id_1".
+
+    Returns:
+        A (condition, study_id) tuple — e.g. ("normal", "1").
+
+    Raises:
+        ValueError: If sample does not match the expected form. Raising beats
+            falling back to a default: condition is what every group comparison
+            keys on, so a quietly mis-parsed id would produce an object that
+            looks fine and compares the wrong cells.
+    """
+    match = SAMPLE_ID_RE.match(sample)
+    if match is None:
+        raise ValueError(
+            f"Sample id {sample!r} does not match the expected "
+            f"<condition>_id_<study_id> form (e.g. 'normal_id_1')."
+        )
+    return match["condition"], match["id"]
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Convert a Cell Ranger count matrix to an AnnData h5ad store"
     )
-    parser.add_argument("--sample", required=True, help="Sample identifier")
     parser.add_argument(
-        "--condition",
+        "--sample",
         required=True,
-        help="Experimental condition for this sample (e.g. normal, obese)",
+        help="Sample identifier, of the form <condition>_id_<study_id> (e.g. normal_id_1)",
     )
     parser.add_argument(
         "--path",
@@ -52,8 +83,13 @@ def main():
 
     output_path = f"{args.sample}.h5ad"
 
+    # Parse before reading the matrix so a malformed sample id fails in seconds
+    # rather than after a multi-minute read.
+    condition, study_id = parse_sample_id(args.sample)
+
     print(f"Sample:    {args.sample}")
-    print(f"Condition: {args.condition}")
+    print(f"Id:        {study_id}")
+    print(f"Condition: {condition}")
     print(f"Input:     {args.path}")
     print(f"Output:    {output_path}")
 
@@ -69,9 +105,11 @@ def main():
 
     # Categorical (not object) so scanpy's groupby/plotting treats these as discrete
     # and so a later concat unions the categories rather than falling back to object.
-    # Each h5ad carries exactly one sample and one condition, hence one category each.
+    # Each h5ad carries exactly one sample, hence one category per column. id stays a
+    # string: it is a label to group and join on, never a quantity to do arithmetic on.
     adata.obs["sample"] = pd.Categorical([args.sample] * adata.n_obs)
-    adata.obs["condition"] = pd.Categorical([args.condition] * adata.n_obs)
+    adata.obs["id"] = pd.Categorical([study_id] * adata.n_obs)
+    adata.obs["condition"] = pd.Categorical([condition] * adata.n_obs)
 
     print(f"Loaded:    {adata.n_obs:,} cells x {adata.n_vars:,} genes")
 

@@ -4,10 +4,13 @@
 
 Nextflow pipeline for scRNA-seq analysis of the Sammy R21 cohort — 15 Cell Ranger
 samples, 10 `normal` vs 5 `obese`. The pipeline converts each sample's Cell Ranger
-count matrix into a QC-annotated AnnData `.h5ad` carrying `sample` and `condition` in
-`obs`; samples are clustered individually downstream.
+count matrix into a QC-annotated AnnData `.h5ad`; samples are clustered individually
+downstream.
 
-The samplesheet (`assets/samplesheet.csv`) has columns `sample,condition,path`.
+The samplesheet (`assets/samplesheet.csv`) has columns `sample,path`. Sample ids are
+`<condition>_id_<study_id>` (e.g. `normal_id_1`), and that is split into three `obs`
+columns on the resulting object — `sample` (`normal_id_1`), `id` (`1`), and
+`condition` (`normal`) — so the design travels with the data.
 
 ## Directory structure
 
