@@ -20,6 +20,7 @@ sammy_r21/
 ├── nextflow.config   # Params and the local / oscer profiles
 ├── modules/          # One .nf process module per step
 ├── bin/              # Python scripts invoked by the modules (argparse CLIs)
+├── notebooks/        # Quarto notebooks rendered by the pipeline (qc_report.qmd)
 ├── assets/           # Samplesheets
 ├── resources/        # Reference files (PPTX template, marker gene lists)
 ├── scripts/          # Quarto report decks (not yet written)
@@ -42,6 +43,9 @@ conda activate sammy_r21
 ```bash
 # Build per-sample h5ads on OSCER (the real target — inputs are on /ourdisk)
 nextflow run main.nf --step create_adata -profile oscer --samplesheet assets/samplesheet.csv
+
+# Cohort QC report — point at create_adata's published handoff samplesheet
+nextflow run main.nf --step qc_report -profile oscer --samplesheet <results>/create_adata_samplesheet.csv
 
 # Verify wiring without executing anything
 nextflow run main.nf --step create_adata -stub --samplesheet assets/samplesheet.csv

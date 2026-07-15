@@ -18,6 +18,27 @@ point, `main.nf`, selected with `--step`:
   `^[Mm][Tt]-` match, so human and mouse both work with no species flag. Ported from
   the `xenium_nb` pipeline, where it was the odd one out (scRNA-seq, not Xenium) and
   nothing consumed its h5ad.
+- `qc_report` — renders `notebooks/qc_report.qmd` to a single self-contained
+  `qc_report.html` covering **all** samples at once: per-sample summary table, violins
+  of genes/counts/mito/top-20, the counts-vs-genes scatter coloured by mito %, and
+  MAD-based suggested per-sample thresholds. Read-only — it filters nothing and writes
+  no h5ad. This is the step to look at **before** choosing clustering QC thresholds.
+
+### The QC report is a fan-in step, and stages its inputs
+
+`qc_report` is the only step that is not per-sample: it `toSortedList()`s every h5ad
+into one task. Two consequences worth keeping:
+
+- **Staging is the input contract.** Every h5ad is staged flat into the work dir and
+  the notebook globs `*.h5ad` from its own directory. There are no Quarto params, no
+  `notebook_registry.json`, and no `quarto_params.nf` — that machinery exists in
+  `xenium_nb` to validate params across many notebooks, and is not worth it for one
+  report. If a second notebook ever appears, revisit; until then, do not add it.
+- **The notebook reads `obs` only**, via `ad.read_h5ad(path, backed="r")`. The cohort's
+  X is ~5 GB and none of it is needed to plot QC metrics. Keep it backed.
+
+Sorting (`toSortedList`, not `collect`) makes the staged order — and so the report —
+reproducible regardless of upstream task completion order.
 
 ### Sample ids carry the design
 
@@ -51,8 +72,16 @@ endpoint.
 `sample,path`).
 
 ```bash
+# 1. build per-sample h5ads
 nextflow run main.nf --step create_adata -profile oscer --samplesheet assets/samplesheet.csv
+
+# 2. QC report over the cohort — point it at create_adata's handoff sheet
+nextflow run main.nf --step qc_report -profile oscer \
+    --samplesheet /scratch/$USER/sammy_r21_out/<run_id>/results/create_adata_samplesheet.csv
 ```
+
+The report lands at `<outdir>/qc_report/qc_report.html`, self-contained (~1.4 MB with
+2 samples), so it is a single `scp` to view off the cluster.
 
 Every artifact-producing step publishes a handoff samplesheet into `outdir`
 (`<step>_samplesheet.csv`) listing its outputs as `sample,path`, so the next step's

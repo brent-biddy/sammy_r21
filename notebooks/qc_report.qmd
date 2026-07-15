@@ -1,0 +1,237 @@
+---
+title: "sammy_r21 — scRNA-seq QC report"
+subtitle: "Pre-filter QC across the cohort, to choose clustering thresholds"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    fig-width: 11
+    fig-align: center
+execute:
+  echo: false
+  warning: false
+---
+
+```{python}
+# | tags: [setup]
+from pathlib import Path
+
+import anndata as ad
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.lines import Line2D
+from scipy.stats import median_abs_deviation
+
+# Every h5ad is staged into this notebook's working directory by the Nextflow
+# process, so globbing is the whole input contract — no params to pass or drift.
+H5ADS = sorted(Path(".").glob("*.h5ad"))
+if not H5ADS:
+    raise FileNotFoundError("No .h5ad files staged next to the notebook.")
+
+# Condition palette, carried over from oir-analysis so figures across the two
+# projects read the same. Teal/orange is a blue-orange axis, which stays separable
+# under the common red-green CVDs.
+COLORS = {"normal": "#2AABB8", "obese": "#E87D2A"}
+
+METRICS = {
+    "n_genes_by_counts": "Genes per cell",
+    "total_counts": "UMI counts per cell",
+    "pct_counts_mt": "Mitochondrial %",
+    "pct_counts_in_top_20_genes": "% counts in top 20 genes",
+}
+
+
+def load_obs(path):
+    """Read one h5ad's obs without pulling X into memory.
+
+    backed="r" leaves the count matrix on disk; obs is all this report needs, and
+    the cohort's X would be ~5 GB.
+    """
+    adata = ad.read_h5ad(path, backed="r")
+    obs = adata.obs.copy()
+    adata.file.close()
+    return obs
+
+
+obs = pd.concat([load_obs(p) for p in H5ADS], ignore_index=True)
+# Order samples by condition then id so the panels read as two blocks, and the
+# figures below can share one sample order.
+obs["id_num"] = obs["id"].astype(int)
+sample_order = (
+    obs[["sample", "condition", "id_num"]]
+    .drop_duplicates()
+    .sort_values(["condition", "id_num"])["sample"]
+    .tolist()
+)
+obs["sample"] = pd.Categorical(obs["sample"], categories=sample_order, ordered=True)
+sample_condition = obs.drop_duplicates("sample").set_index("sample")["condition"].to_dict()
+```
+
+## Cohort
+
+```{python}
+n_samples = len(sample_order)
+n_cells = len(obs)
+by_cond = obs.groupby("condition", observed=True)["sample"].nunique()
+print(f"{n_samples} samples · {n_cells:,} cells (pre-filter)")
+print(" · ".join(f"{c}: {n} samples, {(obs['condition'] == c).sum():,} cells" for c, n in by_cond.items()))
+```
+
+Every barcode Cell Ranger called is included — `create_adata` filters nothing, so
+these are the raw distributions the filtering decision gets made against.
+
+## Per-sample summary
+
+```{python}
+rows = []
+for s in sample_order:
+    d = obs[obs["sample"] == s]
+    rows.append({
+        "sample": s,
+        "condition": sample_condition[s],
+        "cells": len(d),
+        "median genes": round(d["n_genes_by_counts"].median()),
+        "median counts": round(d["total_counts"].median()),
+        "median mito %": round(d["pct_counts_mt"].median(), 2),
+        "cells <200 genes": int((d["n_genes_by_counts"] < 200).sum()),
+        "cells >10% mito": int((d["pct_counts_mt"] > 10).sum()),
+        "cells >20% mito": int((d["pct_counts_mt"] > 20).sum()),
+    })
+summary = pd.DataFrame(rows)
+summary.style.hide(axis="index").format({"median counts": "{:,}", "median genes": "{:,}"})
+```
+
+The last three columns are what fixed thresholds would cost, for orientation only —
+they are not a recommendation.
+
+## Distributions
+
+Each panel is one metric across all samples; colour is condition. Log scale on the
+count and gene axes, since both span orders of magnitude.
+
+```{python}
+# | fig-height: 13
+fig, axes = plt.subplots(len(METRICS), 1, figsize=(11, 3.2 * len(METRICS)))
+
+for ax, (metric, label) in zip(axes, METRICS.items()):
+    data = [obs.loc[obs["sample"] == s, metric].to_numpy() for s in sample_order]
+    parts = ax.violinplot(data, showextrema=False, widths=0.85)
+    for body, s in zip(parts["bodies"], sample_order):
+        body.set_facecolor(COLORS[sample_condition[s]])
+        body.set_alpha(0.75)
+        body.set_edgecolor("none")
+    # Median as a thin white tick — a violin hides the centre, and the centre is
+    # what the threshold conversation is about.
+    medians = [np.median(d) for d in data]
+    ax.scatter(range(1, len(data) + 1), medians, marker="_", s=90, color="white", zorder=3, linewidths=1.4)
+
+    if metric in ("n_genes_by_counts", "total_counts"):
+        ax.set_yscale("log")
+    ax.set_xticks(range(1, len(sample_order) + 1))
+    ax.set_xticklabels(sample_order, rotation=45, ha="right", fontsize=8)
+    # Title carries the metric name; a y-label would just repeat it.
+    ax.set_title(label, loc="left", fontsize=11, pad=8)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(axis="y", alpha=0.25, linewidth=0.5)
+    ax.set_axisbelow(True)
+
+handles = [Line2D([0], [0], marker="s", linestyle="", markersize=9, markerfacecolor=c, markeredgecolor="none", label=k)
+           for k, c in COLORS.items()]
+axes[0].legend(handles=handles, frameon=False, loc="upper right", fontsize=9)
+fig.tight_layout()
+plt.show()
+```
+
+## Per-sample QC scatter
+
+The joint view is what separates debris from real cells: low-count/low-gene points in
+the bottom-left, and dying cells riding high on mitochondrial fraction. Colour is
+mitochondrial %, clipped at 25% so the ramp is not dominated by a few extreme cells.
+
+```{python}
+# | fig-height: 9
+n_cols = 5
+n_rows = int(np.ceil(len(sample_order) / n_cols))
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(11, 2.3 * n_rows), sharex=True, sharey=True)
+axes = np.atleast_1d(axes).ravel()
+
+for ax, s in zip(axes, sample_order):
+    d = obs[obs["sample"] == s]
+    sc = ax.scatter(
+        d["total_counts"], d["n_genes_by_counts"],
+        c=d["pct_counts_mt"].clip(upper=25),
+        cmap="viridis", vmin=0, vmax=25,
+        s=1.5, alpha=0.35, edgecolors="none", rasterized=True,
+    )
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_title(f"{s}\n{len(d):,} cells", fontsize=8, color=COLORS[sample_condition[s]])
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.tick_params(labelsize=7)
+
+for ax in axes[len(sample_order):]:
+    ax.set_visible(False)
+
+fig.supxlabel("Total counts", fontsize=9)
+fig.supylabel("Genes detected", fontsize=9)
+cbar = fig.colorbar(sc, ax=axes.tolist(), fraction=0.02, pad=0.02)
+cbar.set_label("Mitochondrial % (clipped at 25)", fontsize=8)
+cbar.ax.tick_params(labelsize=7)
+plt.show()
+```
+
+## Suggested per-sample thresholds (MAD-based)
+
+Each sample's cutoffs derived from its own distribution — median ± N·MAD, computed on
+`log1p` for the count and gene metrics (they are right-skewed, so a symmetric band only
+makes sense in log space) and on the raw scale for mitochondrial %. This is the
+sc-best-practices formulation: 5 MADs for counts/genes, 3 for mito.
+
+These are a **starting point, not an answer.** Read them against the plots above and
+override any sample where the data disagrees.
+
+```{python}
+def mad_bounds(values, n_mads, log=False):
+    """Return (lower, upper) cutoffs at median ± n_mads · MAD, on the original scale."""
+    v = np.log1p(values) if log else np.asarray(values, dtype=float)
+    med = np.median(v)
+    mad = median_abs_deviation(v)
+    lo, hi = med - n_mads * mad, med + n_mads * mad
+    return (np.expm1(lo), np.expm1(hi)) if log else (lo, hi)
+
+
+rows = []
+for s in sample_order:
+    d = obs[obs["sample"] == s]
+    genes_lo, genes_hi = mad_bounds(d["n_genes_by_counts"], 5, log=True)
+    counts_lo, counts_hi = mad_bounds(d["total_counts"], 5, log=True)
+    _mito_lo, mito_hi = mad_bounds(d["pct_counts_mt"], 3)
+
+    drop = (
+        (d["n_genes_by_counts"] < genes_lo) | (d["n_genes_by_counts"] > genes_hi)
+        | (d["total_counts"] < counts_lo) | (d["total_counts"] > counts_hi)
+        | (d["pct_counts_mt"] > mito_hi)
+    )
+    rows.append({
+        "sample": s,
+        "condition": sample_condition[s],
+        "min genes": round(genes_lo),
+        "max genes": round(genes_hi),
+        "min counts": round(counts_lo),
+        "max counts": round(counts_hi),
+        "max mito %": round(mito_hi, 2),
+        "would drop": int(drop.sum()),
+        "% dropped": round(100 * drop.mean(), 1),
+        "retained": int((~drop).sum()),
+    })
+suggested = pd.DataFrame(rows)
+suggested.style.hide(axis="index").format({"min counts": "{:,}", "max counts": "{:,}", "min genes": "{:,}", "max genes": "{:,}"})
+```
+
+```{python}
+total_drop = suggested["would drop"].sum()
+total_keep = suggested["retained"].sum()
+print(f"Cohort: would drop {total_drop:,} of {n_cells:,} cells ({100 * total_drop / n_cells:.1f}%), retaining {total_keep:,}.")
+```
