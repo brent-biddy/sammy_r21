@@ -25,6 +25,7 @@ from pathlib import Path
 
 import anndata as ad
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from IPython.display import display, Markdown
 from matplotlib.ticker import MaxNLocator
@@ -92,10 +93,13 @@ def qc_scatter(sample):
     plt.close(fig)
 
 
+# (column, axis label, log x). UMI counts span ~500 to >120,000 with almost all
+# cells under 20,000, so a linear axis spends most of the panel on an empty tail.
+# The values stay raw either way — only the axis changes.
 HIST_METRICS = [
-    ("n_genes_by_counts", "Genes per cell"),
-    ("total_counts", "UMI counts per cell"),
-    ("pct_counts_mt", "Mitochondrial % of counts"),
+    ("n_genes_by_counts", "Genes per cell", False),
+    ("total_counts", "UMI counts per cell", True),
+    ("pct_counts_mt", "Mitochondrial % of counts", False),
 ]
 
 
@@ -114,9 +118,12 @@ def qc_hists(sample, bins=100):
     color = COLORS[d["condition"].iloc[0]]
     fig, axes = plt.subplots(1, 3, figsize=(9.0, 3.5))
 
-    for ax, (metric, label) in zip(axes, HIST_METRICS):
+    for ax, (metric, label, log_x) in zip(axes, HIST_METRICS):
         values = d[metric]
-        ax.hist(values, bins=bins, color=color, edgecolor="none")
+        # Log-spaced bins, not just a log axis: linear bins drawn on a log scale
+        # render as wildly uneven bar widths and misrepresent the distribution.
+        edges = np.logspace(np.log10(values.min()), np.log10(values.max()), bins) if log_x else bins
+        ax.hist(values, bins=edges, color=color, edgecolor="none")
 
         # The median is the anchor the threshold conversation keeps returning to, and
         # a histogram's peak is not it when the tail is this long.
@@ -128,9 +135,13 @@ def qc_hists(sample, bins=100):
                     fontsize=7, va="top", ha="left")
 
         ax.set_xlabel(label, fontsize=8)
-        # A third of a slide is not wide enough for matplotlib's default tick count
-        # on a 0-120,000 axis — the labels collide into an unreadable smear.
-        ax.xaxis.set_major_locator(MaxNLocator(4))
+        if log_x:
+            ax.set_xscale("log")
+        else:
+            # A third of a slide is not wide enough for matplotlib's default tick
+            # count — the labels collide into an unreadable smear. (A log axis has
+            # its own decade locator and must not get this.)
+            ax.xaxis.set_major_locator(MaxNLocator(4))
         ax.spines[["top", "right"]].set_visible(False)
         ax.tick_params(labelsize=7)
         ax.grid(axis="y", alpha=0.25, linewidth=0.5)
