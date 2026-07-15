@@ -1,15 +1,10 @@
-// Published output directory for the cohort QC report. Unlike the per-sample steps
-// there is no sample in the path — this is one fan-in task over the whole cohort.
-def qcReportPublishDir() {
-    "${params.outdir}/qc_report"
-}
-
 process QC_REPORT {
     tag "QC_REPORT"
 
+    // No sample in the path — this is one fan-in task over the whole cohort.
     // 'copy' not 'link': the report is small and is the thing you scp off the
     // cluster, so it should survive the work dir being cleaned.
-    publishDir { qcReportPublishDir() }, mode: 'copy'
+    publishDir "${params.outdir}/qc_report", mode: 'copy'
 
     input:
     // Every sample's h5ad, staged flat into the work dir. The notebook globs *.h5ad
