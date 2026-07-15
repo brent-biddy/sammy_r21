@@ -68,9 +68,49 @@ path.
   ramp blended toward white — washed out and nothing like the viridis it is. Points are
   opaque now, which sidesteps it; drop them below 1 and the colorbar needs
   `cbar.solids.set_alpha(1.0)`.
-- **Mito colour is unclipped 0–100 on purpose.** Clipping at 25 made a 25% cell and a
-  90% cell the same yellow, collapsing the dead-cell population sitting at 75–90%. The
-  cost is a near-uniform purple manifold, which is accepted.
+- **Mito colour steps across 30–60 and holds both ends flat.** The distribution is
+  bottom-heavy (median ~4%), so a full 0–100 scale burns its range separating cells
+  that are all equally fine and leaves the manifold a near-uniform purple.
+  `MITO_BINS = np.arange(30, 61, 10)` puts the resolution in the band where the
+  threshold call actually lives. Below 30 nothing is being decided; above 60 a cell is
+  dead either way and 65% vs 90% changes nothing.
+  - **The steps are the point, not decoration.** This panel exists to pick a mito
+    cutoff, and a continuous ramp makes you eyeball where one colour *becomes*
+    another. Three 10-wide steps on round numbers put the candidate cutoffs in the
+    legend, so a band you can see is a number you can name. Do not smooth it back out.
+  - **The bin edges and the annotated cutoffs are the same list** (`MITO_CUTOFFS =
+    list(MITO_BINS)`), and that correspondence is load-bearing: every colorbar tick is a
+    row in `mito_tally`'s annotation, so the colour shows where those cells sit and the
+    number says how many. Changing one without the other breaks the pairing that makes
+    the slide readable.
+  - **The tally is cumulative, not per-band** — a cut at 40 discards everything above
+    it, not just 40–50 — so a `≥N` row covers every band from that tick up. It sits
+    bottom-right, the one reliably empty corner, since the manifold runs bottom-left to
+    top-right and the debris sits low and left of it.
+  - **Collapsing 30–60 to a single band was tried and rejected.** Only `>60` is
+    spatially separated — the 30–60 cells hug the underside of the manifold at every
+    step width tried (5, 10) — which is an argument that the *data* has little structure
+    there, not that the bands should go. Merging them breaks the tick-to-row pairing
+    above and buys nothing.
+  - **This is the inverse of the trap, not a repeat of it.** Clipping the *top* at 25
+    once collapsed a 25% cell into a 90% one and hid the dead population entirely.
+    Clipping at 60 collapses only cells already past saving. Direction is everything
+    here — do not "fix" this back to a full-range scale.
+  - **The steps are Okabe-Ito, not a sampled colormap** (`MITO_STEP_COLORS`). A
+    sequential ramp is built so neighbouring steps blend, which is precisely wrong when
+    the question is which band a point is in. The cost — losing the "higher = worse"
+    read, so you consult the legend — is worth it at this few bands. Do not "restore" a
+    sequential colormap here.
+  - **Both flat ends must stay distinct from the step colours**, or the boundary is
+    invisible and a 29% cell looks like a 31% one. Grey under makes the manifold recede
+    (it is not the question); red over reads as dead against steps that never go red.
+    That last constraint is why the orange-to-crimson end of Okabe-Ito is unusable for
+    the steps — any new step colour has to clear both grey and red.
+  - **`BoundaryNorm(..., extend="both")` maps the out-of-range regions to the
+    colormap's own first and last entries**, so grey and red are ordinary members of
+    the `ListedColormap` rather than `set_under`/`set_over`. Hence the list is
+    `len(MITO_BINS) + 1` — three bins plus two ends — and the colorbar must *not* be
+    passed `extend`, since it already takes it from the norm.
 - Fixes here have twice outlived their cause (a tick-count cap, the colorbar alpha
   workaround). When a panel changes, check whether its workarounds still apply.
 
