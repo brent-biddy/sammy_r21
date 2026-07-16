@@ -37,6 +37,14 @@ point, `main.nf`, selected with `--step`:
   density of cells sitting there** — a flat stretch is a gap between populations, a
   steep one is a dense population being sliced.
 
+- `cluster` — the standard scanpy pass over one `create_adata` h5ad: mito filter,
+  scrublet (flag only), normalize/log1p, HVG, PCA, neighbours, UMAP, and a Leiden
+  sweep writing one `leiden_<res>` column per resolution. One sample in, one
+  `<sample>.h5ad` out — this is the step that finally **filters**, and the only
+  threshold it applies is mito. See "The cluster step applies the cohort's one
+  threshold" below; the short version is that `doublet_score` is trustworthy and
+  `predicted_doublet` is not.
+
 **Sample sections are hardcoded**, one `# <sample>` block per sample, and all 15 are now
 present in samplesheet order (condition, then ascending id — the same order
 `sample_order` produces). Hardcoding is deliberate: generating headings dynamically
@@ -176,6 +184,46 @@ into one task. Two consequences worth keeping:
 Sorting (`toSortedList`, not `collect`) makes the staged order — and so the report —
 reproducible regardless of upstream task completion order.
 
+### The cluster step applies the cohort's one threshold
+
+`cluster` is where the QC report's reading finally becomes a filter. It is per-sample
+(one h5ad in, one out) and reads the same `create_adata` handoff sheet the report does.
+
+- **`MITO_MAX = 50` is a module constant, not a CLI flag.** The threshold question is
+  settled — 50, fixed, all samples — and the reasoning is under the mito colour bullet
+  above. It is deliberately not exposed as a param because a flag invites the
+  per-sample variation that was checked across all 15 samples and rejected. The
+  direction matches the report's `dropped ≥N%` column: the report drops `>= N`, so
+  `cluster` keeps `< N`. Keep those in step.
+- **No `min_genes` / `min_cells` floor, deliberately.** The low-gene debris the QC
+  scatter shows (100–300 genes) survives the mito cut. It is left in so it forms its
+  own clusters and can be dropped by cluster identity after looking — a more informed
+  call than a blanket per-cell floor, and reversible in a way a filter is not.
+- **Use `doublet_score`; do not trust `predicted_doublet`.** Scrublet runs flag-only
+  (it filters nothing, same spirit as the report), but it picks the threshold behind
+  `predicted_doublet` per sample, and on this data that lands somewhere different every
+  time: **0.68 for `normal_id_20` vs 0.30 for `obese_id_23`**, on samples whose
+  *simulated* score distributions are near-identical (90th pct 0.405 vs 0.465). The
+  0.68 sits above that sample's 99.9th observed percentile, so it flagged exactly 1
+  cell out of 15,389. The score is comparable across samples; the thresholded call is
+  not — it is the same per-sample-adaptive-threshold trap the mito cut avoids. Left
+  unpinned rather than fixed cohort-wide because choosing that number wants the
+  look-at-all-15 evidence the mito call got. **Revisit once the cohort has run.**
+- **HVGs are selected but not subset out**, and there is no `sc.pp.scale`. Scaling
+  densifies X across all ~38.6k genes (nothing is filtered upstream, so the var axis is
+  full-width), and scanpy's current guidance is to run PCA on log-normalized data
+  directly. PCA takes the HVG mask, so carrying every gene costs little and keeps DE's
+  inputs intact. `flavor="seurat"` (the default) wants the log1p data it is handed here
+  — `seurat_v3` would want raw counts plus `scikit-misc`, which the container lacks.
+- **The Leiden sweep writes one obs column per resolution** (`leiden_0.2` … `leiden_1.2`).
+  The right resolution is a judgement call made by looking, and a sweep makes that one
+  render instead of one pipeline run per value. `--resolutions '0.4 0.8'` overrides it;
+  quote it, it is one param with many values.
+- **Input and output are both `<sample>.h5ad`**, and stage-in is a symlink into
+  `create_adata`'s publish dir — so writing the output at the top level would clobber
+  the upstream artifact *through the link*. `stageAs: 'input/*'` keeps the two names
+  from ever meeting. Do not "simplify" that away.
+
 ### Sample ids carry the design
 
 Sample ids are `<condition>_id_<study_id>` (e.g. `normal_id_1`, `obese_id_23`).
@@ -197,9 +245,9 @@ This makes the sample id load-bearing: **renaming a sample silently changes its
 samplesheet column rather than making the parse cleverer.
 
 **Samples are clustered individually first — there is no concat step**, and one is not
-planned until per-sample clustering says whether merging is warranted. `create_adata`
-is strictly one-sample-in / one-h5ad-out; the per-sample h5ads are the current
-endpoint.
+planned until per-sample clustering says whether merging is warranted. Both
+`create_adata` and `cluster` are strictly one-sample-in / one-h5ad-out; the per-sample
+clustered h5ads are the current endpoint.
 
 ## Commands
 
@@ -214,10 +262,23 @@ nextflow run main.nf --step create_adata -profile oscer --samplesheet assets/sam
 # 2. QC report over the cohort — point it at create_adata's handoff sheet
 nextflow run main.nf --step qc_report -profile oscer \
     --samplesheet /scratch/$USER/sammy_r21_out/<run_id>/results/create_adata_samplesheet.csv
+
+# 3. cluster each sample — same create_adata handoff sheet as the report reads
+nextflow run main.nf --step cluster -profile oscer \
+    --samplesheet /scratch/$USER/sammy_r21_out/<run_id>/results/create_adata_samplesheet.csv
+
+# ...optionally overriding the Leiden sweep (quote it — it is one param, many values)
+nextflow run main.nf --step cluster -profile oscer --resolutions '0.4 0.8' \
+    --samplesheet /scratch/$USER/sammy_r21_out/<run_id>/results/create_adata_samplesheet.csv
 ```
 
 The report lands at `<outdir>/qc_report/qc_report.pptx` (~193 KB with 2 samples), so it
 is a single `scp` to view off the cluster.
+
+`cluster` reads the **same** `create_adata_samplesheet.csv` the report does — it consumes
+the raw h5ads, not the report. The two are independent consumers of `create_adata` and
+can run in either order, but read the report first: it is where the mito cutoff `cluster`
+applies was chosen.
 
 Every artifact-producing step publishes a handoff samplesheet into `outdir`
 (`<step>_samplesheet.csv`) listing its outputs as `sample,path`, so the next step's
