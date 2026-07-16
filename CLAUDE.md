@@ -36,8 +36,9 @@ Pointers only. The reasoning lives in the code, next to the thing it explains.
   warranted. The per-sample clustered h5ads are the current endpoint.
 - **Sample ids encode the design**, so renaming a sample silently changes its
   `condition`. → `create_adata.py` docstring.
-- **No Quarto params machinery** — staging is the input contract. → `qc_report.nf`.
-  A second notebook is the trigger to revisit.
+- **No Quarto params machinery** — staging is the input contract, and both notebooks
+  glob `*.h5ad` from their own directory. Revisited when `cluster_report` was added
+  (the trigger that was written down) and still not warranted. → `qc_report.nf`.
 
 ## Commands
 
@@ -58,7 +59,12 @@ nextflow run main.nf --step qc_report -profile oscer \
 nextflow run main.nf --step cluster -profile oscer --resolutions '0.4 0.8' \
     --samplesheet /scratch/$USER/sammy_r21_out/<run_id>/results/create_adata_samplesheet.csv
 
-# wiring check (no script execution) and config parse check
+# 4. cluster_report — reads cluster's handoff sheet, not create_adata's
+nextflow run main.nf --step cluster_report -profile oscer \
+    --samplesheet /scratch/$USER/sammy_r21_out/<run_id>/results/cluster_samplesheet.csv
+
+# wiring check and config parse check. Note `nextflow config .` does NOT compile
+# main.nf — only a run or -stub run catches a syntax error there.
 nextflow run main.nf --step create_adata -stub --samplesheet assets/samplesheet.csv
 nextflow config .
 ```
@@ -87,4 +93,4 @@ need the `environment.yml` conda env activated.
 - File-level header comments, docstrings on helpers, and WHY comments for non-obvious
   decisions. Annotate channel shape after non-obvious transformations.
 - `data/`, `results*/`, `work/`, and `docs/` are gitignored. `resources/` is tracked
-  (PPTX template, marker lists).
+  (the OUHSC PPTX template).
