@@ -45,10 +45,13 @@ COLORS = {"normal": "#2AABB8", "obese": "#E87D2A"}
 # either way — telling 75% from 90% changes no threshold. 30-70 is the band where the
 # call actually lives, so that is where the resolution goes.
 #
-# The top end is 70 rather than 60 because the retention curves put the gap between the
-# live and dead populations out at ~72 (normal_id_20) and ~85 (obese_id_23): a cell at
-# 60-70 is still in that gap, not in the dead cloud, so colouring it as dead was calling
-# the question early. Revisit if the other 13 samples close the gap sooner.
+# The top end of 70 is generous, and known to be: it came from per-sample retention
+# curves that put the gap between the live and dead populations out at ~72, but the full
+# cohort then showed the 60-70 cells sitting in the debris cloud. They are dead; 70 is
+# late. Left at 70 on purpose — these bands are a reading aid, nothing downstream reads
+# them, and the threshold question is settled (50, fixed, all samples). Moving it changes
+# no decision, and by the same evidence 50-60 is probably debris too, so there is no
+# principled place to stop.
 #
 # Note this is the inverse of the trap in this panel's history, not a repeat of it:
 # clipping the TOP at 25 collapsed a 25% cell into a 90% one and hid the dead
