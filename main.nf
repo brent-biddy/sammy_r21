@@ -6,20 +6,28 @@
 //   create_adata              samplesheet: sample, path
 //   qc_report                 samplesheet: sample, path  (h5ads from create_adata)
 //   cluster                   samplesheet: sample, path  (h5ads from create_adata)
+//   cluster_report            samplesheet: sample, path  (h5ads from cluster)
 
-include { CREATE_ADATA } from './modules/create_adata'
-include { QC_REPORT }    from './modules/qc_report'
-include { CLUSTER }      from './modules/cluster'
+include { CREATE_ADATA }   from './modules/create_adata'
+include { QC_REPORT }      from './modules/qc_report'
+include { CLUSTER }        from './modules/cluster'
+include { CLUSTER_REPORT } from './modules/cluster_report'
 
 // ── Entry workflow ────────────────────────────────────────────────────────────
 
 workflow {
-    if (!params.step) error "Please provide --step <name>. Valid steps: create_adata, qc_report, cluster"
+    // Inline, not a script-level `def`: Nextflow's strict syntax rejects statements
+    // mixed with script declarations, and `nextflow config .` does not compile main.nf
+    // so it will not catch that — only a run or a -stub run will.
+    def valid_steps = 'create_adata, qc_report, cluster, cluster_report'
 
-    if      (params.step == 'create_adata') create_adata()
-    else if (params.step == 'qc_report')    qc_report()
-    else if (params.step == 'cluster')      cluster()
-    else error "Unknown --step '${params.step}'. Valid steps: create_adata, qc_report, cluster"
+    if (!params.step) error "Please provide --step <name>. Valid steps: ${valid_steps}"
+
+    if      (params.step == 'create_adata')   create_adata()
+    else if (params.step == 'qc_report')      qc_report()
+    else if (params.step == 'cluster')        cluster()
+    else if (params.step == 'cluster_report') cluster_report()
+    else error "Unknown --step '${params.step}'. Valid steps: ${valid_steps}"
 }
 
 // ── create_adata ──────────────────────────────────────────────────────────────
@@ -96,4 +104,30 @@ workflow cluster {
         .map { it.text }             // read row content so collectFile's sort is deterministic
         .collectFile(name: 'cluster_samplesheet.csv', storeDir: params.outdir,
                      seed: 'sample,path', newLine: true, sort: true)
+}
+
+// ── cluster_report ────────────────────────────────────────────────────────────
+
+workflow cluster_report {
+    if (!params.samplesheet) error "Please provide --samplesheet"
+
+    // Point --samplesheet at cluster's published handoff sheet — this report reads the
+    // clustered h5ads (X_umap and the leiden columns), not create_adata's raw ones.
+    channel
+        .fromPath(params.samplesheet)
+        .splitCsv(header: true)      // Map(sample, path)
+        .map { row ->
+            if (!row.path) error "Samplesheet row missing 'path': ${row}"
+            file(row.path)
+        }                            // path(h5ad)
+        // sort so the staged order — and therefore the report — is reproducible
+        // regardless of the order tasks happen to finish upstream.
+        .toSortedList()              // one list of every h5ad: fans in to a single task
+        .set { clusterReportH5ads }
+
+    CLUSTER_REPORT(
+        clusterReportH5ads,
+        file("${projectDir}/notebooks/cluster_report.qmd"),
+        file("${projectDir}/resources/ouhsc_ppt_template.pptx"),
+    )
 }

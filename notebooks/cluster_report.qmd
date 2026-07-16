@@ -1,0 +1,462 @@
+---
+title: "sammy_r21 — clustering"
+subtitle: "Per-sample Leiden clustering and QC on the UMAP"
+format:
+  pptx:
+    reference-doc: ouhsc_ppt_template.pptx
+    # `#` becomes a Section Header slide, `##` a Title-and-Content slide. Without
+    # this pandoc infers the level from the headings present, so adding the first
+    # `#` would silently demote every `##` to a bullet.
+    slide-level: 2
+execute:
+  echo: false
+  warning: false
+  # Keep rendering when a cell raises: sample sections are hardcoded, so a section
+  # whose h5ad was not staged errors on its own slide instead of taking the whole
+  # deck down. The cost is that a genuinely broken cell yields an error slide and an
+  # exit code of 0 — read the slides, not just the exit status.
+  error: true
+---
+
+```{python}
+# | tags: [setup]
+from pathlib import Path
+
+import anndata as ad
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from IPython.display import display, Markdown
+from matplotlib.colors import LogNorm
+
+# The reference template is 16:9 at 10 x 5.625in; leave room for a slide title.
+FIGSIZE = (9.0, 4.3)
+
+# Every h5ad is staged into this notebook's working directory by the Nextflow
+# process, so globbing is the whole input contract — no params to pass or drift.
+# These are cluster's h5ads, not create_adata's: they carry X_umap and the leiden
+# columns, and their cells are already past the mito cut.
+H5ADS = sorted(Path(".").glob("*.h5ad"))
+if not H5ADS:
+    raise FileNotFoundError("No .h5ad files staged next to the notebook.")
+
+# Cap the panels per row so a wide sweep wraps instead of shrinking to nothing.
+MAX_COLS = 3
+
+
+def load_sample(path):
+    """Read one h5ad's obs and UMAP coords without pulling X into memory.
+
+    backed="r" leaves the count matrix on disk. obs and obsm both come into memory
+    regardless, which is what this report needs and is a few MB per sample against a
+    cohort X of ~5 GB.
+    """
+    adata = ad.read_h5ad(path, backed="r")
+    df = adata.obs.copy()
+    umap = adata.obsm["X_umap"]
+    df["umap_1"] = umap[:, 0]
+    df["umap_2"] = umap[:, 1]
+    adata.file.close()
+    return df
+
+
+def resolution_columns(df):
+    """The sweep's leiden columns, ordered by resolution rather than by string.
+
+    Discovered from obs rather than hardcoded: --resolutions is a pipeline param, so
+    the set of columns is whatever the run that produced these h5ads chose. Sorting
+    on the float matters — a plain sort puts leiden_1.0 before leiden_0.2.
+    """
+    cols = [c for c in df.columns if c.startswith("leiden_")]
+    return sorted(cols, key=lambda c: float(c.split("_", 1)[1]))
+
+
+def panel_grid(n, figsize=FIGSIZE):
+    """A balanced grid sized to exactly n panels, with any leftover axes removed.
+
+    Rows first, then columns back-solved from the row count, so the panels spread
+    evenly instead of filling rows to MAX_COLS and stranding a remainder: 4 metrics
+    land 2x2 rather than 3 across with one alone under a two-thirds gap. 6 still
+    lands 2x3.
+
+    delaxes, not set_visible(False): a hidden axes still reserves its cell under
+    tight_layout, which squeezes the real panels into a fraction of the slide and
+    strands the labels. Removing it reclaims the space.
+    """
+    nrows = int(np.ceil(n / MAX_COLS))
+    ncols = int(np.ceil(n / nrows))
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+    flat = axes.ravel()
+    for ax in flat[n:]:
+        fig.delaxes(ax)
+    return fig, flat[:n]
+
+
+def style_umap(ax, title):
+    """UMAP axes carry no interpretable units — drop the frame, keep the title."""
+    ax.set_title(title, fontsize=8, loc="left")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.spines[["top", "right", "bottom", "left"]].set_visible(False)
+
+
+# (column, panel title, log colour scale). Counts span orders of magnitude, so a
+# linear ramp puts almost every cell in the bottom colour; the rest are bounded.
+QC_METRICS = [
+    ("n_genes_by_counts", "Genes detected", False),
+    ("total_counts", "UMI counts", True),
+    ("pct_counts_mt", "Mitochondrial %", False),
+    ("doublet_score", "Doublet score", False),
+]
+
+
+def qc_umap(sample):
+    """One slide's figure: this sample's UMAP, once per QC metric.
+
+    A continuous viridis ramp here, deliberately unlike the qc_report scatter's
+    banded mito colours. Those bands exist to pick a cutoff, so they put the
+    candidate numbers in the legend. That question is settled and already applied —
+    every cell here is under 50% — so the question is now "does a region of the
+    manifold run high", which is a magnitude read, and a ramp answers it. Rebanding
+    at 30/40/50 would leave three colours and mostly grey.
+
+    Debris and doublets are what to look for: cluster.py deliberately applies no
+    gene/count floor, so the low-gene cells are still here and expected to sit apart.
+    """
+    d = samples[sample]
+    fig, axes = panel_grid(len(QC_METRICS))
+
+    for ax, (metric, title, log_c) in zip(axes, QC_METRICS):
+        values = d[metric]
+        # Guard the log norm: a zero or negative would raise, and total_counts can be
+        # small on debris. vmin at the smallest positive value keeps the ramp honest.
+        norm = LogNorm(vmin=max(values[values > 0].min(), 1e-9), vmax=values.max()) if log_c else None
+        scatter = ax.scatter(
+            d["umap_1"], d["umap_2"], c=values,
+            cmap="viridis", norm=norm,
+            # Opaque: a colorbar inherits its mappable's alpha and would draw the
+            # ramp blended toward white.
+            s=2, alpha=1.0, edgecolors="none", rasterized=True,
+        )
+        style_umap(ax, title)
+        cbar = fig.colorbar(scatter, ax=ax, fraction=0.045, pad=0.02)
+        cbar.ax.tick_params(labelsize=6)
+
+    fig.suptitle(f"{sample} · {len(d):,} cells", fontsize=9, x=0.01, ha="left")
+    fig.tight_layout()
+    plt.show()
+    plt.close(fig)
+
+
+def cluster_umap(sample):
+    """One slide's figure: this sample's UMAP, once per Leiden resolution.
+
+    The point of the slide is choosing a resolution, so the panels are the sweep and
+    the titles carry the cluster count. Labels are drawn on the clusters rather than
+    in a legend: at 25 clusters a legend would eat the panel, and tab20 has to cycle
+    anyway — the on-data label is what actually identifies a cluster, so colour only
+    has to separate neighbours.
+    """
+    d = samples[sample]
+    res_cols = resolution_columns(d)
+    if not res_cols:
+        raise ValueError(f"{sample}: no leiden_* columns in obs — was this h5ad clustered?")
+
+    fig, axes = panel_grid(len(res_cols))
+    cmap = plt.get_cmap("tab20")
+
+    for ax, col in zip(axes, res_cols):
+        labels = d[col].astype(str)
+        # Numeric order so the colour a cluster gets is stable across resolutions,
+        # and so the legend-free labels read in order.
+        levels = sorted(labels.unique(), key=int)
+        for i, level in enumerate(levels):
+            m = labels == level
+            ax.scatter(
+                d.loc[m, "umap_1"], d.loc[m, "umap_2"],
+                color=cmap(i % cmap.N),
+                s=2, alpha=1.0, edgecolors="none", rasterized=True,
+            )
+            # Median, not mean: a cluster with a stray arm would drag the mean off
+            # the cells it is labelling.
+            ax.annotate(
+                level,
+                (d.loc[m, "umap_1"].median(), d.loc[m, "umap_2"].median()),
+                fontsize=5, fontweight="bold", ha="center", va="center",
+                color="black",
+                bbox=dict(boxstyle="round,pad=0.1", facecolor="white",
+                          alpha=0.7, edgecolor="none"),
+            )
+        style_umap(ax, f"{col.replace('leiden_', 'resolution ')} · {len(levels)} clusters")
+
+    fig.suptitle(f"{sample} · {len(d):,} cells", fontsize=9, x=0.01, ha="left")
+    fig.tight_layout()
+    plt.show()
+    plt.close(fig)
+
+
+def md_table(df):
+    """Render a DataFrame as a markdown table.
+
+    Built by hand rather than via df.style (HTML-only, renders as nothing in pptx)
+    or df.to_markdown (needs tabulate, which the container does not carry).
+    """
+    header = "| " + " | ".join(str(c) for c in df.columns) + " |"
+    rule = "| " + " | ".join("---" for _ in df.columns) + " |"
+    rows = ["| " + " | ".join(str(v) for v in row) + " |" for row in df.itertuples(index=False)]
+    display(Markdown("\n".join([header, rule] + rows)))
+
+
+samples = {}
+for path in H5ADS:
+    df = load_sample(path)
+    samples[df["sample"].iloc[0]] = df
+
+# Order samples by condition then id so the table reads as two blocks — the same
+# order the hardcoded sections below are in.
+meta = pd.DataFrame(
+    [(s, d["condition"].iloc[0], int(d["id"].iloc[0])) for s, d in samples.items()],
+    columns=["sample", "condition", "id_num"],
+).sort_values(["condition", "id_num"])
+sample_order = meta["sample"].tolist()
+```
+
+## Clusters per resolution
+
+```{python}
+# One row per sample, one column per resolution: the cluster counts the per-sample
+# slides show one at a time, in the one place they can be compared. Not hardcoded —
+# it iterates sample_order, so it picks up samples with no edit here.
+res_cols = resolution_columns(samples[sample_order[0]])
+rows = []
+for s in sample_order:
+    d = samples[s]
+    row = {"sample": s, "condition": d["condition"].iloc[0], "cells": f"{len(d):,}"}
+    for col in res_cols:
+        row[col.replace("leiden_", "res ")] = d[col].nunique()
+    rows.append(row)
+md_table(pd.DataFrame(rows))
+```
+
+<!--
+Everything below is one hardcoded `# <sample>` block per sample, in samplesheet order
+(condition, then ascending id — the same order sample_order produces). Regenerate them
+from assets/samplesheet.csv rather than typing ids by hand.
+
+Hardcoding is deliberate, not laziness. Generating the headings in a loop needs
+`output: asis`, and under it an inline figure lands between the markdown blocks and
+leaves the *next* heading not starting its own line — so pandoc emits a literal
+"## sample" as text and drops the image. One cell per sample means plt.show() just
+works. The summary table above is the opposite case: it iterates sample_order and so
+picks up new samples with no edit here.
+-->
+
+# normal_id_1
+
+## QC metrics on the UMAP
+
+```{python}
+qc_umap("normal_id_1")
+```
+
+## Clusters by resolution
+
+```{python}
+cluster_umap("normal_id_1")
+```
+
+# normal_id_3
+
+## QC metrics on the UMAP
+
+```{python}
+qc_umap("normal_id_3")
+```
+
+## Clusters by resolution
+
+```{python}
+cluster_umap("normal_id_3")
+```
+
+# normal_id_9
+
+## QC metrics on the UMAP
+
+```{python}
+qc_umap("normal_id_9")
+```
+
+## Clusters by resolution
+
+```{python}
+cluster_umap("normal_id_9")
+```
+
+# normal_id_17
+
+## QC metrics on the UMAP
+
+```{python}
+qc_umap("normal_id_17")
+```
+
+## Clusters by resolution
+
+```{python}
+cluster_umap("normal_id_17")
+```
+
+# normal_id_20
+
+## QC metrics on the UMAP
+
+```{python}
+qc_umap("normal_id_20")
+```
+
+## Clusters by resolution
+
+```{python}
+cluster_umap("normal_id_20")
+```
+
+# normal_id_27
+
+## QC metrics on the UMAP
+
+```{python}
+qc_umap("normal_id_27")
+```
+
+## Clusters by resolution
+
+```{python}
+cluster_umap("normal_id_27")
+```
+
+# normal_id_33
+
+## QC metrics on the UMAP
+
+```{python}
+qc_umap("normal_id_33")
+```
+
+## Clusters by resolution
+
+```{python}
+cluster_umap("normal_id_33")
+```
+
+# normal_id_36
+
+## QC metrics on the UMAP
+
+```{python}
+qc_umap("normal_id_36")
+```
+
+## Clusters by resolution
+
+```{python}
+cluster_umap("normal_id_36")
+```
+
+# normal_id_55
+
+## QC metrics on the UMAP
+
+```{python}
+qc_umap("normal_id_55")
+```
+
+## Clusters by resolution
+
+```{python}
+cluster_umap("normal_id_55")
+```
+
+# normal_id_61
+
+## QC metrics on the UMAP
+
+```{python}
+qc_umap("normal_id_61")
+```
+
+## Clusters by resolution
+
+```{python}
+cluster_umap("normal_id_61")
+```
+
+# obese_id_23
+
+## QC metrics on the UMAP
+
+```{python}
+qc_umap("obese_id_23")
+```
+
+## Clusters by resolution
+
+```{python}
+cluster_umap("obese_id_23")
+```
+
+# obese_id_31
+
+## QC metrics on the UMAP
+
+```{python}
+qc_umap("obese_id_31")
+```
+
+## Clusters by resolution
+
+```{python}
+cluster_umap("obese_id_31")
+```
+
+# obese_id_57
+
+## QC metrics on the UMAP
+
+```{python}
+qc_umap("obese_id_57")
+```
+
+## Clusters by resolution
+
+```{python}
+cluster_umap("obese_id_57")
+```
+
+# obese_id_67
+
+## QC metrics on the UMAP
+
+```{python}
+qc_umap("obese_id_67")
+```
+
+## Clusters by resolution
+
+```{python}
+cluster_umap("obese_id_67")
+```
+
+# obese_id_75
+
+## QC metrics on the UMAP
+
+```{python}
+qc_umap("obese_id_75")
+```
+
+## Clusters by resolution
+
+```{python}
+cluster_umap("obese_id_75")
+```
