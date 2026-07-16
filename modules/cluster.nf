@@ -38,6 +38,8 @@ process CLUSTER {
     def args = []
     if (params.resolutions) args << "--resolutions ${params.resolutions}"
     def args_str = args.join(' ')
+    // Redirect caches and temp files into the task dir: an OSCER compute node's /tmp is
+    // read-only, so anything defaulting there fails. Every process needs this preamble.
     """
     export XDG_CACHE_HOME="\$PWD/.cache"
     export TMPDIR="\$PWD/tmp"
