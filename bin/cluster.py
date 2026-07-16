@@ -3,12 +3,17 @@
 cluster.py - Cluster one sample's h5ad and write the clustered store.
 
 Consumes a create_adata h5ad (raw counts + QC metrics, nothing filtered) and runs
-the standard scanpy pass: mito filter, doublet scoring, normalization, HVG, PCA,
-neighbours, UMAP, and a Leiden sweep. Samples are clustered individually — there
-is no concat step — so this is strictly one-sample-in / one-h5ad-out.
+the standard scanpy pass: mito filter, doublet scoring, normalization, HVG, scale,
+PCA, neighbours, UMAP, and a Leiden sweep. Samples are clustered individually —
+there is no concat step — so this is strictly one-sample-in / one-h5ad-out.
+
+The embedding parameters follow scanpy's legacy 2017 clustering tutorial, which
+exists to reproduce Seurat's results — see the Embedding parameters block below for
+what is copied and what is deliberately not.
 
 Writes <sample>.h5ad into the current working directory, alongside timing and
-session info files.
+session info files. The written object keeps its full var axis and its counts
+layer; only the embedding is computed on the HVG subset.
 
 Usage:
     cluster.py --sample normal_id_1 --path normal_id_1.h5ad
@@ -33,12 +38,22 @@ MITO_MAX = 50
 
 DEFAULT_RESOLUTIONS = [0.2, 0.4, 0.6, 0.8, 1.0, 1.2]
 
-# Genes used for PCA. Selected but NOT subset out: DE later wants every gene, and
-# with no gene filter upstream the full var axis costs little to carry.
-N_TOP_GENES = 2000
+# ── Embedding parameters ──────────────────────────────────────────────────────
+# These mirror scanpy's legacy 2017 clustering tutorial, which exists specifically to
+# reproduce Seurat's PBMC3k results:
+#   https://scanpy.scverse.org/en/stable/tutorials/basics/clustering-2017.html
+# Its QC thresholds are deliberately NOT copied — they are tuned for 2.7k PBMCs
+# (mito < 5, genes < 2500) and this cohort's mito cut is settled at 50 cohort-wide.
+# Its regress_out(["total_counts", "pct_counts_mt"]) is also deliberately skipped.
 
-# Counts per cell after normalization, before log1p — the conventional 10k.
-TARGET_SUM = 1e4
+N_TOP_GENES = 2000
+TARGET_SUM = 1e4        # counts per cell after normalization, before log1p
+SCALE_MAX = 10          # clip z-scores here, as the tutorial does
+N_COMPS = 50            # PCs computed
+N_PCS = 40              # PCs the neighbour graph actually uses
+N_NEIGHBORS = 10
+# Fixed so a rerun reproduces the same embedding and the same clusters.
+RANDOM_STATE = 0
 
 
 def parse_args():
@@ -120,31 +135,42 @@ def main():
     )
 
     # Stash the counts before normalize_total overwrites X in place. DE and any
-    # count-based method downstream need them back.
+    # count-based method downstream need them back, and seurat_v3 HVG reads them here.
     adata.layers["counts"] = adata.X.copy()
 
     with timer("Normalize"):
         sc.pp.normalize_total(adata, target_sum=TARGET_SUM)
         sc.pp.log1p(adata)
 
-    # flavor="seurat" (the default) expects the log1p data it is being handed here.
-    # seurat_v3 would want raw counts and the scikit-misc package, which the
-    # container does not carry.
+    # seurat_v3 selects on raw counts (hence layer="counts"), unlike the "seurat"
+    # flavor which expects log data. It is what the tutorial uses.
     with timer("HVG"):
-        sc.pp.highly_variable_genes(adata, n_top_genes=N_TOP_GENES)
+        sc.pp.highly_variable_genes(
+            adata, layer="counts", n_top_genes=N_TOP_GENES, flavor="seurat_v3"
+        )
     print(f"HVG:         {int(adata.var['highly_variable'].sum()):,} genes selected")
 
-    # No sc.pp.scale: it densifies X (all ~36k genes, since nothing was filtered out
-    # upstream), and scanpy's current guidance is to run PCA on log-normalized data
-    # directly. PCA uses the HVG mask, so the unscaled full var axis costs nothing.
-    with timer("PCA"):
-        sc.tl.pca(adata, n_comps=50)
+    # Embed on a HVG-only copy, then carry the results back onto the full object.
+    #
+    # The tutorial scales every gene into a layer and lets PCA mask to the HVGs. That
+    # is numerically identical to this — scale z-scores each gene independently, so
+    # subsetting before or after does not move a single PCA input — but it would
+    # densify all ~38.6k genes (nothing is filtered upstream, so the var axis is
+    # full-width) to compute 2,000 columns' worth of embedding. Scaling only what PCA
+    # reads is also what Seurat's ScaleData does by default.
+    #
+    # Keeping the *published* h5ad full-width matters: cluster_report reads obs and
+    # obsm, and any later pseudobulk DE needs layers["counts"] across every gene.
+    with timer("Scale + PCA"):
+        hvg = adata[:, adata.var["highly_variable"]].copy()
+        sc.pp.scale(hvg, max_value=SCALE_MAX)
+        sc.tl.pca(hvg, n_comps=N_COMPS, svd_solver="arpack", random_state=RANDOM_STATE)
 
     with timer("Neighbors"):
-        sc.pp.neighbors(adata)
+        sc.pp.neighbors(hvg, n_neighbors=N_NEIGHBORS, n_pcs=N_PCS, random_state=RANDOM_STATE)
 
     with timer("UMAP"):
-        sc.tl.umap(adata)
+        sc.tl.umap(hvg, random_state=RANDOM_STATE)
 
     # One column per resolution rather than one run at a chosen resolution: the
     # right resolution is a judgement call made by looking, and a sweep makes that
@@ -152,17 +178,24 @@ def main():
     with timer("Leiden sweep"):
         for resolution in args.resolutions:
             key = f"leiden_{resolution}"
-            # flavor="igraph" with n_iterations=2 is scanpy's recommended pairing;
-            # the legacy leidenalg default is deprecated and warns.
+            # flavor="igraph" with n_iterations=2 is scanpy's recommended pairing and
+            # what the tutorial uses; the legacy leidenalg default is deprecated.
             sc.tl.leiden(
-                adata,
+                hvg,
                 resolution=resolution,
                 key_added=key,
                 flavor="igraph",
                 n_iterations=2,
                 directed=False,
+                random_state=RANDOM_STATE,
             )
+            adata.obs[key] = hvg.obs[key]
             print(f"  {key}: {adata.obs[key].nunique()} clusters")
+
+    # Carry the embedding back onto the full object. obs_names are untouched by the
+    # var-axis subset, so these stay row-aligned.
+    adata.obsm["X_pca"] = hvg.obsm["X_pca"]
+    adata.obsm["X_umap"] = hvg.obsm["X_umap"]
 
     with timer("Write h5ad"):
         adata.write_h5ad(output_path)
