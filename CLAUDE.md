@@ -30,14 +30,12 @@ point, `main.nf`, selected with `--step`:
   the per-scatter tallies give the same numbers one sample at a time.
 
   **Mito-retention curves were built and then removed** (cells discarded vs cutoff, one
-  line per sample, plus a per-sample grid). They did their job — the top of the colour
-  range is 70 because of what they showed — and were dropped once it was made. Do not
-  rebuild them speculatively; the finding is recorded under the mito colour bullet
-  below. What they were good for, if the question ever comes back: the curve is the
-  complement of the mito ECDF, so **its slope at a cutoff is the density of cells
-  sitting there** — a flat stretch is a gap between populations, a steep one is a dense
-  population being sliced, and a cutoff in a flat stretch is defensible precisely
-  because moving it ±10 changes nothing.
+  line per sample, plus a per-sample grid). Do not rebuild them speculatively — and note
+  they got the one call they were used for wrong, because they are marginal in mito
+  while the question is joint (see the mito colour bullet). If the question ever comes
+  back: the curve is the complement of the mito ECDF, so **its slope at a cutoff is the
+  density of cells sitting there** — a flat stretch is a gap between populations, a
+  steep one is a dense population being sliced.
 
 **Sample sections are hardcoded**, one `# <sample>` block per sample, and all 15 are now
 present in samplesheet order (condition, then ascending id — the same order
@@ -105,11 +103,23 @@ path.
   `MITO_BINS = np.arange(30, 71, 10)` puts the resolution in the band where the
   threshold call actually lives. Below 30 nothing is being decided; above 70 a cell is
   dead either way and 75% vs 90% changes nothing.
-  - **The top end is 70 because the retention curves said so**, and they are gone now,
-    so this is the only record: the gap between the live and dead populations ran out to
-    ~72 in `normal_id_20` and ~85 in `obese_id_23`. A cell at 60–70 is still inside that
-    gap rather than in the dead cloud, so the earlier `>60` red was calling the question
-    early. Revisit if the other 13 close the gap sooner.
+  - **The top end of 70 is generous, and known to be.** It came from the retention
+    curves, which put the gap between the live and dead populations out at ~72; the full
+    cohort then showed the 60–70 cells sitting in the debris cloud, so they are dead and
+    70 is late. It was left at 70 deliberately — the bands are a reading aid, nothing
+    downstream reads them, the report filters nothing, and the threshold question is
+    settled (**50, fixed, all samples**). Moving it changes no decision, and by the same
+    evidence 50–60 is probably debris too, so there is no principled place to stop.
+  - **Why the curve was wrong and the scatter right: marginal vs joint.** The retention
+    curve only saw mito, so a thin tail at 60–70 read as "still in the gap". The scatter
+    sees those same cells at 100–300 genes — debris regardless of where the mito density
+    thins. When the two disagree, the joint view wins.
+  - **Fixed rather than per-sample, because the confound was checked and did not hold.**
+    At n=1 per condition `obese_id_23` carried ~2× `normal_id_20`'s high-mito fraction,
+    which would have made a fixed cutoff discard systematically more from one arm and
+    handed downstream DE a technical covariate. Across all 15 that was sample variance.
+    No condition-correlated discard rate, so no case for an adaptive per-sample
+    threshold (miQC, median + 3×MAD) — **do not re-raise this without new evidence.**
   - **The steps are the point, not decoration.** This panel exists to pick a mito
     cutoff, and a continuous ramp makes you eyeball where one colour *becomes*
     another. Four 10-wide steps on round numbers put the candidate cutoffs in the
