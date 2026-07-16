@@ -5,18 +5,21 @@
 // Steps:
 //   create_adata              samplesheet: sample, path
 //   qc_report                 samplesheet: sample, path  (h5ads from create_adata)
+//   cluster                   samplesheet: sample, path  (h5ads from create_adata)
 
 include { CREATE_ADATA } from './modules/create_adata'
 include { QC_REPORT }    from './modules/qc_report'
+include { CLUSTER }      from './modules/cluster'
 
 // ── Entry workflow ────────────────────────────────────────────────────────────
 
 workflow {
-    if (!params.step) error "Please provide --step <name>. Valid steps: create_adata, qc_report"
+    if (!params.step) error "Please provide --step <name>. Valid steps: create_adata, qc_report, cluster"
 
     if      (params.step == 'create_adata') create_adata()
     else if (params.step == 'qc_report')    qc_report()
-    else error "Unknown --step '${params.step}'. Valid steps: create_adata, qc_report"
+    else if (params.step == 'cluster')      cluster()
+    else error "Unknown --step '${params.step}'. Valid steps: create_adata, qc_report, cluster"
 }
 
 // ── create_adata ──────────────────────────────────────────────────────────────
@@ -67,4 +70,30 @@ workflow qc_report {
         file("${projectDir}/notebooks/qc_report.qmd"),
         file("${projectDir}/resources/ouhsc_ppt_template.pptx"),
     )
+}
+
+// ── cluster ───────────────────────────────────────────────────────────────────
+
+workflow cluster {
+    if (!params.samplesheet) error "Please provide --samplesheet"
+
+    // Point --samplesheet at create_adata's published handoff sheet. Samples are
+    // clustered individually — one h5ad in, one h5ad out, no concat — so this stays
+    // a per-sample fan-out, unlike qc_report.
+    channel
+        .fromPath(params.samplesheet)
+        .splitCsv(header: true)      // Map(sample, path)
+        .map { row ->
+            if (!row.sample) error "Samplesheet row missing 'sample': ${row}"
+            if (!row.path)   error "Samplesheet row missing 'path': ${row}"
+            tuple(row.sample, file(row.path))
+        }                            // tuple(sample, path)
+        | CLUSTER
+
+    // Aggregate the per-sample rows into a handoff samplesheet, same contract as
+    // create_adata's — the published path lives in the module.
+    CLUSTER.out.samplesheet_row
+        .map { it.text }             // read row content so collectFile's sort is deterministic
+        .collectFile(name: 'cluster_samplesheet.csv', storeDir: params.outdir,
+                     seed: 'sample,path', newLine: true, sort: true)
 }
