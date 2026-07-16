@@ -264,8 +264,10 @@ def summary_row(label, condition, d):
         "median genes": f"{round(d['n_genes_by_counts'].median()):,}",
         "median counts": f"{round(d['total_counts'].median()):,}",
         "median mito %": f"{mt.median():.2f}",
-        # The per-sample number behind the retention curve, which is coloured by
-        # condition and so cannot name an outlier itself.
+        # The only place discard rates can be compared across samples side by side —
+        # the per-scatter tallies give the same numbers one sample at a time. Note
+        # cluster.py keeps < MITO_CANDIDATE, so this ">=" is its exact complement;
+        # change one and change the other.
         f"dropped ≥{MITO_CANDIDATE}%": f"{(mt >= MITO_CANDIDATE).mean() * 100:.1f}%",
     }
 
@@ -277,6 +279,18 @@ rows.append(summary_row("cohort", "", obs))
 md_table(pd.DataFrame(rows))
 ```
 
+<!--
+Everything below is one hardcoded `# <sample>` block per sample, in samplesheet order
+(condition, then ascending id — the same order sample_order produces). Regenerate them
+from assets/samplesheet.csv rather than typing ids by hand.
+
+Hardcoding is deliberate, not laziness. Generating the headings in a loop needs
+`output: asis`, and under it an inline figure lands between the markdown blocks and
+leaves the *next* heading not starting its own line — so pandoc emits a literal
+"## sample" as text and drops the image. One cell per sample means plt.show() just
+works. The summary table above is the opposite case: it iterates sample_order and so
+picks up new samples with no edit here.
+-->
 
 # normal_id_1
 
