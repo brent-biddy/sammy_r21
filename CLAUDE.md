@@ -26,9 +26,12 @@ step that filters.
 
 Pointers only. The reasoning lives in the code, next to the thing it explains.
 
-- **Mito cutoff: 50%, fixed cohort-wide.** Not per-sample or adaptive (miQC, median +
+- **Mito cutoff: 30%, fixed cohort-wide.** Not per-sample or adaptive (miQC, median +
   3×MAD) — the condition confound was checked across all 15 samples and did not hold.
   → `cluster.py` (`MITO_MAX`), `qc_report.qmd` (`MITO_BINS`).
+- **Cluster ids are size-ranked** — `cluster.py` renumbers each Leiden result `1..k` by
+  descending cell count (`1` = largest), so ids are comparable across resolutions and
+  every downstream reader means the same thing by "cluster 1". → `relabel_by_size`.
 - **Use `doublet_score`, not `predicted_doublet`** — scrublet's auto-threshold is
   unstable across samples here. → `cluster.py`, at the scrublet call. *Open: revisit
   pinning a fixed threshold once all 15 have run.*
@@ -56,7 +59,8 @@ nextflow run main.nf --step create_adata -profile oscer --samplesheet assets/sam
 nextflow run main.nf --step qc_report -profile oscer \
     --samplesheet /scratch/$USER/sammy_r21_out/<run_id>/results/create_adata_samplesheet.csv
 
-nextflow run main.nf --step cluster -profile oscer --resolutions '0.4 0.8' \
+# cluster sweeps Leiden 0.1–1.0 by default; pass --resolutions only to override.
+nextflow run main.nf --step cluster -profile oscer \
     --samplesheet /scratch/$USER/sammy_r21_out/<run_id>/results/create_adata_samplesheet.csv
 
 # 4. cluster_report — reads cluster's handoff sheet, not create_adata's
