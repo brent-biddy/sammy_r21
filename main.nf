@@ -7,11 +7,13 @@
 //   qc_report                 samplesheet: sample, path  (h5ads from create_adata)
 //   cluster                   samplesheet: sample, path  (h5ads from create_adata)
 //   cluster_report            samplesheet: sample, path  (h5ads from cluster)
+//   sample_summary            samplesheet: sample, path  (h5ads from cluster)
 
 include { CREATE_ADATA }   from './modules/create_adata'
 include { QC_REPORT }      from './modules/qc_report'
 include { CLUSTER }        from './modules/cluster'
 include { CLUSTER_REPORT } from './modules/cluster_report'
+include { SAMPLE_SUMMARY } from './modules/sample_summary'
 
 // ── Entry workflow ────────────────────────────────────────────────────────────
 
@@ -19,7 +21,7 @@ workflow {
     // Inline, not a script-level `def`: Nextflow's strict syntax rejects statements
     // mixed with script declarations, and `nextflow config .` does not compile main.nf
     // so it will not catch that — only a run or a -stub run will.
-    def valid_steps = 'create_adata, qc_report, cluster, cluster_report'
+    def valid_steps = 'create_adata, qc_report, cluster, cluster_report, sample_summary'
 
     if (!params.step) error "Please provide --step <name>. Valid steps: ${valid_steps}"
 
@@ -27,6 +29,7 @@ workflow {
     else if (params.step == 'qc_report')      qc_report()
     else if (params.step == 'cluster')        cluster()
     else if (params.step == 'cluster_report') cluster_report()
+    else if (params.step == 'sample_summary') sample_summary()
     else error "Unknown --step '${params.step}'. Valid steps: ${valid_steps}"
 }
 
@@ -129,5 +132,33 @@ workflow cluster_report {
         clusterReportH5ads,
         file("${projectDir}/notebooks/cluster_report.qmd"),
         file("${projectDir}/resources/ouhsc_ppt_template.pptx"),
+    )
+}
+
+// ── sample_summary ────────────────────────────────────────────────────────────
+
+workflow sample_summary {
+    if (!params.samplesheet) error "Please provide --samplesheet"
+
+    // Point --samplesheet at cluster's published handoff sheet — this reads the same
+    // clustered h5ads as cluster_report, but tabulates them (cell accounting, per-cell
+    // QC, clusters at each sample's chosen resolution) instead of plotting them.
+    channel
+        .fromPath(params.samplesheet)
+        .splitCsv(header: true)      // Map(sample, path)
+        .map { row ->
+            if (!row.path) error "Samplesheet row missing 'path': ${row}"
+            file(row.path)
+        }                            // path(h5ad)
+        // sort so the staged order — and therefore the table row order fallback — is
+        // reproducible regardless of the order tasks happen to finish upstream.
+        .toSortedList()              // one list of every h5ad: fans in to a single task
+        .set { sampleSummaryH5ads }
+
+    SAMPLE_SUMMARY(
+        sampleSummaryH5ads,
+        file("${projectDir}/notebooks/sample_summary.qmd"),
+        file("${projectDir}/resources/ouhsc_ppt_template.pptx"),
+        file("${projectDir}/assets/chosen_resolutions.csv"),
     )
 }

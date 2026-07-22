@@ -71,6 +71,18 @@ def resolution_columns(df):
     return sorted(cols, key=lambda c: float(c.split("_", 1)[1]))
 
 
+def resolution_parts(res_cols, nparts):
+    """Split the ordered sweep into nparts balanced, contiguous groups — one slide each.
+
+    A wide sweep (the default 0.1-1.0 is ten resolutions) crammed onto one slide shrinks
+    every UMAP to an unreadable thumbnail, and choosing a resolution is exactly what this
+    slide is for. Splitting across slides keeps the panels legible; the groups are
+    contiguous so each slide still reads low-to-high. np.array_split balances the
+    remainder (ten -> 5+5, seven -> 4+3) instead of stranding one panel alone on a slide.
+    """
+    return [list(part) for part in np.array_split(res_cols, nparts)]
+
+
 def panel_grid(n, figsize=FIGSIZE):
     """A balanced grid sized to exactly n panels, with any leftover axes removed.
 
@@ -148,24 +160,34 @@ def qc_umap(sample):
     plt.close(fig)
 
 
-def cluster_umap(sample):
-    """One slide's figure: this sample's UMAP, once per Leiden resolution.
+# The sweep is split across this many slides per sample so ten resolutions do not
+# shrink to ten unreadable thumbnails on one slide. Bump to 3 for an even wider sweep;
+# the per-sample sections below must have one `cluster_umap(sample, part)` slide per part.
+CLUSTER_SLIDES = 2
 
-    The point of the slide is choosing a resolution, so the panels are the sweep and
-    the titles carry the cluster count. Labels are drawn on the clusters rather than
-    in a legend: at 25 clusters a legend would eat the panel, and tab20 has to cycle
-    anyway — the on-data label is what actually identifies a cluster, so colour only
-    has to separate neighbours.
+
+def cluster_umap(sample, part):
+    """One slide's figure: this sample's UMAP for part `part` of the resolution sweep.
+
+    The point of the slide is choosing a resolution, so the panels are the sweep and the
+    titles carry the cluster count. The sweep is split into CLUSTER_SLIDES contiguous
+    slides (part is 0-based) so each slide shows a legible handful of panels rather than
+    the whole sweep at thumbnail size.
+
+    Labels are drawn on the clusters rather than in a legend: at 25 clusters a legend
+    would eat the panel, and tab20 has to cycle anyway — the on-data label is what
+    actually identifies a cluster, so colour only has to separate neighbours.
     """
     d = samples[sample]
     res_cols = resolution_columns(d)
     if not res_cols:
         raise ValueError(f"{sample}: no leiden_* columns in obs — was this h5ad clustered?")
+    cols = resolution_parts(res_cols, CLUSTER_SLIDES)[part]
 
-    fig, axes = panel_grid(len(res_cols))
+    fig, axes = panel_grid(len(cols))
     cmap = plt.get_cmap("tab20")
 
-    for ax, col in zip(axes, res_cols):
+    for ax, col in zip(axes, cols):
         labels = d[col].astype(str)
         # Numeric order so the colour a cluster gets is stable across resolutions,
         # and so the legend-free labels read in order.
@@ -189,7 +211,9 @@ def cluster_umap(sample):
             )
         style_umap(ax, f"{col.replace('leiden_', 'resolution ')} · {len(levels)} clusters")
 
-    fig.suptitle(f"{sample} · {len(d):,} cells", fontsize=9, x=0.01, ha="left")
+    # Name the resolution span on the title so the two slides are self-identifying.
+    span = f"{cols[0].split('_', 1)[1]}–{cols[-1].split('_', 1)[1]}"
+    fig.suptitle(f"{sample} · {len(d):,} cells · resolutions {span}", fontsize=9, x=0.01, ha="left")
     fig.tight_layout()
     plt.show()
     plt.close(fig)
@@ -259,10 +283,16 @@ picks up new samples with no edit here.
 qc_umap("normal_id_1")
 ```
 
-## Clusters by resolution
+## Clusters by resolution (1/2)
 
 ```{python}
-cluster_umap("normal_id_1")
+cluster_umap("normal_id_1", 0)
+```
+
+## Clusters by resolution (2/2)
+
+```{python}
+cluster_umap("normal_id_1", 1)
 ```
 
 # normal_id_3
@@ -273,10 +303,16 @@ cluster_umap("normal_id_1")
 qc_umap("normal_id_3")
 ```
 
-## Clusters by resolution
+## Clusters by resolution (1/2)
 
 ```{python}
-cluster_umap("normal_id_3")
+cluster_umap("normal_id_3", 0)
+```
+
+## Clusters by resolution (2/2)
+
+```{python}
+cluster_umap("normal_id_3", 1)
 ```
 
 # normal_id_9
@@ -287,10 +323,16 @@ cluster_umap("normal_id_3")
 qc_umap("normal_id_9")
 ```
 
-## Clusters by resolution
+## Clusters by resolution (1/2)
 
 ```{python}
-cluster_umap("normal_id_9")
+cluster_umap("normal_id_9", 0)
+```
+
+## Clusters by resolution (2/2)
+
+```{python}
+cluster_umap("normal_id_9", 1)
 ```
 
 # normal_id_17
@@ -301,10 +343,16 @@ cluster_umap("normal_id_9")
 qc_umap("normal_id_17")
 ```
 
-## Clusters by resolution
+## Clusters by resolution (1/2)
 
 ```{python}
-cluster_umap("normal_id_17")
+cluster_umap("normal_id_17", 0)
+```
+
+## Clusters by resolution (2/2)
+
+```{python}
+cluster_umap("normal_id_17", 1)
 ```
 
 # normal_id_20
@@ -315,10 +363,16 @@ cluster_umap("normal_id_17")
 qc_umap("normal_id_20")
 ```
 
-## Clusters by resolution
+## Clusters by resolution (1/2)
 
 ```{python}
-cluster_umap("normal_id_20")
+cluster_umap("normal_id_20", 0)
+```
+
+## Clusters by resolution (2/2)
+
+```{python}
+cluster_umap("normal_id_20", 1)
 ```
 
 # normal_id_27
@@ -329,10 +383,16 @@ cluster_umap("normal_id_20")
 qc_umap("normal_id_27")
 ```
 
-## Clusters by resolution
+## Clusters by resolution (1/2)
 
 ```{python}
-cluster_umap("normal_id_27")
+cluster_umap("normal_id_27", 0)
+```
+
+## Clusters by resolution (2/2)
+
+```{python}
+cluster_umap("normal_id_27", 1)
 ```
 
 # normal_id_33
@@ -343,10 +403,16 @@ cluster_umap("normal_id_27")
 qc_umap("normal_id_33")
 ```
 
-## Clusters by resolution
+## Clusters by resolution (1/2)
 
 ```{python}
-cluster_umap("normal_id_33")
+cluster_umap("normal_id_33", 0)
+```
+
+## Clusters by resolution (2/2)
+
+```{python}
+cluster_umap("normal_id_33", 1)
 ```
 
 # normal_id_36
@@ -357,10 +423,16 @@ cluster_umap("normal_id_33")
 qc_umap("normal_id_36")
 ```
 
-## Clusters by resolution
+## Clusters by resolution (1/2)
 
 ```{python}
-cluster_umap("normal_id_36")
+cluster_umap("normal_id_36", 0)
+```
+
+## Clusters by resolution (2/2)
+
+```{python}
+cluster_umap("normal_id_36", 1)
 ```
 
 # normal_id_55
@@ -371,10 +443,16 @@ cluster_umap("normal_id_36")
 qc_umap("normal_id_55")
 ```
 
-## Clusters by resolution
+## Clusters by resolution (1/2)
 
 ```{python}
-cluster_umap("normal_id_55")
+cluster_umap("normal_id_55", 0)
+```
+
+## Clusters by resolution (2/2)
+
+```{python}
+cluster_umap("normal_id_55", 1)
 ```
 
 # normal_id_61
@@ -385,10 +463,16 @@ cluster_umap("normal_id_55")
 qc_umap("normal_id_61")
 ```
 
-## Clusters by resolution
+## Clusters by resolution (1/2)
 
 ```{python}
-cluster_umap("normal_id_61")
+cluster_umap("normal_id_61", 0)
+```
+
+## Clusters by resolution (2/2)
+
+```{python}
+cluster_umap("normal_id_61", 1)
 ```
 
 # obese_id_23
@@ -399,10 +483,16 @@ cluster_umap("normal_id_61")
 qc_umap("obese_id_23")
 ```
 
-## Clusters by resolution
+## Clusters by resolution (1/2)
 
 ```{python}
-cluster_umap("obese_id_23")
+cluster_umap("obese_id_23", 0)
+```
+
+## Clusters by resolution (2/2)
+
+```{python}
+cluster_umap("obese_id_23", 1)
 ```
 
 # obese_id_31
@@ -413,10 +503,16 @@ cluster_umap("obese_id_23")
 qc_umap("obese_id_31")
 ```
 
-## Clusters by resolution
+## Clusters by resolution (1/2)
 
 ```{python}
-cluster_umap("obese_id_31")
+cluster_umap("obese_id_31", 0)
+```
+
+## Clusters by resolution (2/2)
+
+```{python}
+cluster_umap("obese_id_31", 1)
 ```
 
 # obese_id_57
@@ -427,10 +523,16 @@ cluster_umap("obese_id_31")
 qc_umap("obese_id_57")
 ```
 
-## Clusters by resolution
+## Clusters by resolution (1/2)
 
 ```{python}
-cluster_umap("obese_id_57")
+cluster_umap("obese_id_57", 0)
+```
+
+## Clusters by resolution (2/2)
+
+```{python}
+cluster_umap("obese_id_57", 1)
 ```
 
 # obese_id_67
@@ -441,10 +543,16 @@ cluster_umap("obese_id_57")
 qc_umap("obese_id_67")
 ```
 
-## Clusters by resolution
+## Clusters by resolution (1/2)
 
 ```{python}
-cluster_umap("obese_id_67")
+cluster_umap("obese_id_67", 0)
+```
+
+## Clusters by resolution (2/2)
+
+```{python}
+cluster_umap("obese_id_67", 1)
 ```
 
 # obese_id_75
@@ -455,8 +563,14 @@ cluster_umap("obese_id_67")
 qc_umap("obese_id_75")
 ```
 
-## Clusters by resolution
+## Clusters by resolution (1/2)
 
 ```{python}
-cluster_umap("obese_id_75")
+cluster_umap("obese_id_75", 0)
+```
+
+## Clusters by resolution (2/2)
+
+```{python}
+cluster_umap("obese_id_75", 1)
 ```

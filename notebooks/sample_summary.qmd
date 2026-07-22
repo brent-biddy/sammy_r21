@@ -1,0 +1,189 @@
+---
+title: "sammy_r21 — per-sample bookkeeping"
+subtitle: "Cell accounting and per-cell QC across the cohort, at each sample's chosen resolution"
+format:
+  pptx:
+    reference-doc: ouhsc_ppt_template.pptx
+    # `#` becomes a Section Header slide, `##` a Title-and-Content slide. Without
+    # this pandoc infers the level from the headings present, so adding the first
+    # `#` would silently demote every `##` to a bullet.
+    slide-level: 2
+execute:
+  echo: false
+  warning: false
+  # Keep rendering when a cell raises: a sample whose chosen resolution has no
+  # matching leiden column (or whose h5ad predates uns["mito_filter"]) errors on its
+  # own slide instead of taking the whole deck down. The cost is that a genuinely
+  # broken cell yields an error slide and an exit code of 0 — read the slides, not
+  # just the exit status.
+  error: true
+---
+
+```{python}
+# | tags: [setup]
+from pathlib import Path
+
+import anndata as ad
+import pandas as pd
+from IPython.display import display, Markdown
+
+# Every clustered h5ad is staged into this notebook's working directory by the
+# Nextflow process, so globbing is the whole input contract — no params to pass or
+# drift. These are cluster's h5ads: their cells are past the mito cut, they carry the
+# leiden sweep columns, and (when produced by a current cluster.py) uns["mito_filter"].
+H5ADS = sorted(Path(".").glob("*.h5ad"))
+if not H5ADS:
+    raise FileNotFoundError("No .h5ad files staged next to the notebook.")
+
+# The per-sample resolution table is staged flat beside the notebook, same contract as
+# the h5ads. n_clusters is reported at the resolution CHOSEN for each sample, not one
+# cohort-wide value: the right resolution is a judgement made by reading cluster_report,
+# recorded here. A sample missing from this table, or a chosen resolution with no
+# matching leiden_<res> column in its h5ad, is an error — bookkeeping silently at the
+# wrong resolution is exactly what the per-sample choice exists to prevent.
+RESOLUTIONS_CSV = Path("chosen_resolutions.csv")
+
+
+def load_chosen_resolutions(path):
+    """sample -> chosen resolution (float). The CSV carries a leading `#` comment block."""
+    df = pd.read_csv(path, comment="#")
+    missing = {"sample", "resolution"} - set(df.columns)
+    if missing:
+        raise ValueError(f"{path}: resolution table needs columns sample,resolution; missing {missing}")
+    return dict(zip(df["sample"].astype(str), df["resolution"].astype(float)))
+
+
+def detected_genes(adata):
+    """Number of genes with a nonzero count in at least one retained cell.
+
+    Reads layers["counts"] (raw) when present — cluster.py stashes it before
+    normalization; the published h5ad always carries it. Falls back to X, where
+    log1p(normalized) is > 0 exactly where the count was, so the detected set is the
+    same either way. This is post-filter detection: create_adata's var counts were
+    computed before the mito cut and cluster.py does not recompute them, so the matrix
+    is the only source that reflects the cells actually kept.
+    """
+    m = adata.layers["counts"] if "counts" in adata.layers else adata.X
+    if hasattr(m, "getnnz"):                       # sparse: cells expressing each gene
+        return int((m.getnnz(axis=0) > 0).sum())
+    return int((m > 0).any(axis=0).sum())          # dense fallback
+
+
+def md_table(df):
+    """Render a DataFrame as a markdown table.
+
+    Built by hand rather than via df.style (HTML-only, renders as nothing in pptx)
+    or df.to_markdown (needs tabulate, which the container does not carry).
+    """
+    header = "| " + " | ".join(str(c) for c in df.columns) + " |"
+    rule = "| " + " | ".join("---" for _ in df.columns) + " |"
+    rows = ["| " + " | ".join(str(v) for v in row) + " |" for row in df.itertuples(index=False)]
+    display(Markdown("\n".join([header, rule] + rows)))
+
+
+def summarize(sample, path, resolution):
+    """One bookkeeping row for a sample, as a dict.
+
+    Read full (not backed="r"): detected_genes needs the counts matrix, so there is no
+    backed-mode saving to be had. This is a fan-in report that runs once, one sample in
+    memory at a time, so a full read per sample is affordable.
+    """
+    adata = ad.read_h5ad(path)
+
+    key = f"leiden_{resolution}"                    # matches cluster.py's key_added
+    if key not in adata.obs:
+        leiden_cols = sorted(c for c in adata.obs.columns if c.startswith("leiden_"))
+        raise ValueError(
+            f"{sample}: chosen resolution {resolution} -> '{key}' not in h5ad. "
+            f"Available: {leiden_cols or 'none'}"
+        )
+
+    # Mito accounting is only in the object if cluster.py wrote uns["mito_filter"]
+    # (added when this bookkeeping was). Absent -> the removed/raw counts are
+    # unrecoverable from this object; report NA rather than guess.
+    mito = adata.uns.get("mito_filter")
+    if mito is None:
+        n_removed = n_raw = pct_removed = pd.NA
+    else:
+        n_removed = int(mito["n_dropped"])
+        n_raw = int(mito["n_before"])
+        pct_removed = round(n_removed / n_raw * 100, 2) if n_raw else pd.NA
+
+    obs = adata.obs
+    return {
+        "sample": sample,
+        "condition": str(obs["condition"].iloc[0]),
+        "id_num": int(obs["id"].iloc[0]),
+        "resolution": resolution,
+        "clusters": int(obs[key].nunique()),
+        "cells_raw": n_raw,
+        "cells_removed": n_removed,
+        "pct_removed": pct_removed,
+        "cells_kept": int(adata.n_obs),            # retained (post mito filter)
+        "detected_genes": detected_genes(adata),
+        # Medians, not means: the per-cell distributions are right-skewed (a debris tail
+        # is left in on purpose — see cluster.py), so the median is the more honest
+        # "typical cell" here. Swap to .mean() if a downstream comparison wants it.
+        "genes_per_cell": round(float(obs["n_genes_by_counts"].median()), 1),
+        "counts_per_cell": round(float(obs["total_counts"].median()), 1),
+        "pct_mito": round(float(obs["pct_counts_mt"].median()), 2),
+    }
+
+
+resolutions = load_chosen_resolutions(RESOLUTIONS_CSV)
+
+rows = []
+for path in H5ADS:
+    # sample id is in obs; read it cheaply (backed) before the full summarize read.
+    sample = str(ad.read_h5ad(path, backed="r").obs["sample"].iloc[0])
+    if sample not in resolutions:
+        raise KeyError(
+            f"{sample}: no chosen resolution in {RESOLUTIONS_CSV}. Add a row per sample "
+            "before bookkeeping — n_clusters is reported at the per-sample resolution, "
+            "so there is no safe default."
+        )
+    rows.append(summarize(sample, path, resolutions[sample]))
+
+# Order the cohort as two blocks, normal then obese, ascending id — the order the rest
+# of the pipeline's reports read in.
+summary = (
+    pd.DataFrame(rows)
+    .sort_values(["condition", "id_num"])
+    .drop(columns="id_num")
+    .reset_index(drop=True)
+)
+
+# CSV side output: the full flat table, published alongside the deck. Keeps the chosen
+# resolution (which the slide omits) as provenance — n_clusters is reported at it, so
+# once samples differ it is the only record of which resolution produced that count.
+summary.to_csv("sample_summary.csv", index=False)
+```
+
+# Cohort bookkeeping
+
+## Per-sample summary
+
+Per-cell metrics (genes/cell, counts/cell, mito %) are medians.
+
+```{python}
+# One consolidated table: cell accounting (raw -> removed -> kept), the cluster count at
+# each sample's chosen resolution, and the per-cell QC medians. Compact display headers
+# so all of it fits a single slide; the CSV keeps the verbatim column names. Resolution
+# is deliberately omitted here (kept in the CSV as provenance). cells_removed / pct_removed
+# read NA for any h5ad produced before uns["mito_filter"]. Per-cell metrics (genes/cell,
+# counts/cell, mito %) are medians — see summarize().
+DISPLAY = {
+    "sample": "sample",
+    "condition": "condition",
+    "clusters": "clusters",
+    "cells_raw": "cells raw",
+    "cells_removed": "removed",
+    "pct_removed": "% removed",
+    "cells_kept": "cells kept",
+    "detected_genes": "genes detected",
+    "genes_per_cell": "genes/cell",
+    "counts_per_cell": "counts/cell",
+    "pct_mito": "mito %",
+}
+md_table(summary[list(DISPLAY)].rename(columns=DISPLAY))
+```

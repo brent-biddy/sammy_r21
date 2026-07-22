@@ -34,16 +34,20 @@ from timer import timer, timing_summary
 # it would invite the per-sample variation that was considered and rejected.
 # Mirrors the qc_report's `dropped >=N%` column, which is the number this cut was
 # chosen against — the report drops >= N, so we keep < N. Keep those in step.
-MITO_MAX = 50
+MITO_MAX = 30
 
-DEFAULT_RESOLUTIONS = [0.2, 0.4, 0.6, 0.8, 1.0, 1.2]
+# 0.1–1.0 in 0.1 steps, so the sweep is the default and --resolutions rarely needs
+# passing. Spelled out as literals rather than [i / 10 for i in range(1, 11)]: the value
+# is formatted straight into the obs key (f"leiden_{resolution}"), and 0.3 from division
+# is 0.30000000000000004, which would name a column leiden_0.30000000000000004.
+DEFAULT_RESOLUTIONS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
 # ── Embedding parameters ──────────────────────────────────────────────────────
 # These mirror scanpy's legacy 2017 clustering tutorial, which exists specifically to
 # reproduce Seurat's PBMC3k results:
 #   https://scanpy.scverse.org/en/stable/tutorials/basics/clustering-2017.html
 # Its QC thresholds are deliberately NOT copied — they are tuned for 2.7k PBMCs
-# (mito < 5, genes < 2500) and this cohort's mito cut is settled at 50 cohort-wide.
+# (mito < 5, genes < 2500) and this cohort's mito cut is settled at 30 cohort-wide.
 # Its regress_out(["total_counts", "pct_counts_mt"]) is also deliberately skipped.
 #
 # Its sc.pp.scale(max_value=10) is skipped too, following scanpy's current clustering
@@ -88,6 +92,28 @@ def parse_args():
     return parser.parse_args()
 
 
+def relabel_by_size(labels):
+    """Renumber Leiden labels 1..k by descending cluster size (largest is "1").
+
+    Leiden returns 0-indexed labels whose numbering carries no meaning — cluster "0" is
+    not the most populous, and the ids are not comparable across resolutions. Relabel so
+    the id encodes rank: cluster 1 is always the biggest, cluster 2 the next, and so on.
+    That makes the sweep's columns read consistently and a reader's "cluster 1" mean the
+    same thing everywhere. Ties in exact cell count are broken by the original label so
+    the mapping is deterministic across reruns. Returns an ordered categorical (1..k) so
+    downstream plots and tables sort numerically rather than lexically.
+    """
+    counts = labels.value_counts()                       # descending by count
+    order = sorted(counts.index, key=lambda c: (-counts[c], int(c)))
+    mapping = {old: str(rank) for rank, old in enumerate(order, start=1)}
+    new_levels = [str(rank) for rank in range(1, len(order) + 1)]
+    return (
+        labels.map(mapping)
+        .astype("category")
+        .cat.set_categories(new_levels, ordered=True)
+    )
+
+
 def main():
     args = parse_args()
 
@@ -108,6 +134,16 @@ def main():
         n_before = adata.n_obs
         adata = adata[adata.obs["pct_counts_mt"] < MITO_MAX].copy()
         n_dropped = n_before - adata.n_obs
+    # Record the mito accounting in uns so the clustered h5ad is self-describing:
+    # the dropped cells are physically gone from the object, so without this the only
+    # way to recover "how many were removed" is to re-read the create_adata h5ad and
+    # re-apply the cut. Downstream bookkeeping reads these scalars instead.
+    adata.uns["mito_filter"] = {
+        "mito_max": MITO_MAX,
+        "n_before": n_before,
+        "n_dropped": n_dropped,
+        "n_after": adata.n_obs,
+    }
     print(
         f"Mito >={MITO_MAX}%:  dropped {n_dropped:,} of {n_before:,} cells "
         f"({n_dropped / n_before * 100:.1f}%), {adata.n_obs:,} remain"
@@ -188,6 +224,10 @@ def main():
                 directed=False,
                 random_state=RANDOM_STATE,
             )
+            # Renumber 1..k by descending size in place — see relabel_by_size. Done here,
+            # not in a report, so every consumer of the h5ad (the deck, annotation, any
+            # DE) sees the same size-ranked ids.
+            adata.obs[key] = relabel_by_size(adata.obs[key])
             print(f"  {key}: {adata.obs[key].nunique()} clusters")
 
     with timer("Write h5ad"):
