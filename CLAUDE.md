@@ -18,9 +18,9 @@ raw matrices on OSCER scratch. One entry point, `main.nf`, dispatching on `--ste
 see its header for the step list, and each `bin/<step>.py` docstring for what that step
 does.
 
-`create_adata` and `cluster` are per-sample (one h5ad in, one out). `qc_report` is the
-only fan-in step. `create_adata` and `qc_report` filter nothing; `cluster` is the only
-step that filters.
+`create_adata` and `cluster` are per-sample (one h5ad in, one out). `qc_report`,
+`cluster_report`, and `sample_summary` are fan-in reports over the whole cohort. `cluster`
+is the only step that filters; every other step filters nothing.
 
 ## Settled — do not re-open without new evidence
 
@@ -39,9 +39,10 @@ Pointers only. The reasoning lives in the code, next to the thing it explains.
   warranted. The per-sample clustered h5ads are the current endpoint.
 - **Sample ids encode the design**, so renaming a sample silently changes its
   `condition`. → `create_adata.py` docstring.
-- **No Quarto params machinery** — staging is the input contract, and both notebooks
-  glob `*.h5ad` from their own directory. Revisited when `cluster_report` was added
-  (the trigger that was written down) and still not warranted. → `qc_report.nf`.
+- **No Quarto params machinery** — staging is the input contract: the report notebooks
+  glob `*.h5ad` from their own directory (`sample_summary` also reads a staged
+  `chosen_resolutions.csv` by fixed name). Revisited when `cluster_report` and again when
+  `sample_summary` were added, and still not warranted. → `qc_report.nf`.
 
 ## Commands
 
@@ -65,6 +66,12 @@ nextflow run main.nf --step cluster -profile oscer \
 
 # 4. cluster_report — reads cluster's handoff sheet, not create_adata's
 nextflow run main.nf --step cluster_report -profile oscer \
+    --samplesheet /scratch/$USER/sammy_r21_out/<run_id>/results/cluster_samplesheet.csv
+
+# 5. sample_summary — bookkeeping deck + csv (cell counts, mito tally, per-cell QC),
+# with n_clusters at each sample's resolution in assets/chosen_resolutions.csv. Also
+# reads cluster's handoff sheet. Every clustered sample must have a row in that CSV.
+nextflow run main.nf --step sample_summary -profile oscer \
     --samplesheet /scratch/$USER/sammy_r21_out/<run_id>/results/cluster_samplesheet.csv
 
 # wiring check and config parse check. Note `nextflow config .` does NOT compile
